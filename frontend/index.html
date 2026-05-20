@@ -68,6 +68,8 @@ nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
 .mo-sel-dot{width:7px;height:7px;border-radius:50%;border:1.5px solid var(--fg3);
   position:absolute;top:8px;right:8px}
 .model-opt.active .mo-sel-dot{background:var(--accent);border-color:var(--accent)}
+.model-opt.downloading{border-color:var(--warn)!important;animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.3)} 50%{box-shadow:0 0 0 5px rgba(245,158,11,0)}}
 
 /* LIGHTBOX */
 .lbox{position:relative;background:var(--lbox);border:2px dashed #1e3050;
@@ -264,7 +266,7 @@ input[type=file]{display:none}
           <div class="mo-name">YOLOv8n <span class="mo-badge mo-lite" data-i18n="lite">Lite</span></div>
           <div class="mo-stats">11.7 MB · mAP50 75.8% · <span data-i18n="fast">Fast</span></div>
         </div>
-        <div class="model-opt disabled" id="optFull" title="98.8MB — too large for browser">
+        <div class="model-opt disabled" id="optFull" title="Loading ORT first…">
           <div class="mo-sel-dot"></div>
           <div class="mo-name">YOLOv8m <span class="mo-badge mo-full" data-i18n="full">Full</span></div>
           <div class="mo-stats">98.8 MB · mAP50 90.4% · <span data-i18n="accurate">Accurate</span></div>

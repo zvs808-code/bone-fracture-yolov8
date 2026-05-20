@@ -13,11 +13,84 @@
   const COLORS = ['#22c55e','#3b82f6','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16'];
 
   /* ── STATE ─────────────────────────────────────────────── */
-  let META    = null;
-  let SESSION = null;
-  let lastBitmap = null;
-  let lastDets   = [];
-  let lastElapsed = 0;
+  let META         = null;
+  let SESSION      = null;
+  let SESSION_LITE = null;
+  let SESSION_FULL = null;
+  let currentModel = 'lite';
+  let lastBitmap   = null;
+  let lastDets     = [];
+  let lastElapsed  = 0;
+
+  const FULL_MODEL_URL  = 'https://media.githubusercontent.com/media/zvs808-code/bone-fracture-yolov8/main/frontend/model_full.onnx';
+  const LITE_MODEL_PATH = './model.onnx';
+  const IDB_NAME = 'fracture-models-v1';
+
+  /* ── IndexedDB cache ────────────────────────────────────── */
+  function idbOpen() {
+    return new Promise((res, rej) => {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = e => e.target.result.createObjectStore('models');
+      req.onsuccess = e => res(e.target.result);
+      req.onerror   = e => rej(e.target.error);
+    });
+  }
+  async function idbGet(key) {
+    try {
+      const db = await idbOpen();
+      return new Promise((res, rej) => {
+        const tx = db.transaction('models','readonly');
+        const req = tx.objectStore('models').get(key);
+        req.onsuccess = e => res(e.target.result || null);
+        req.onerror   = e => rej(e.target.error);
+      });
+    } catch { return null; }
+  }
+  async function idbSet(key, val) {
+    try {
+      const db = await idbOpen();
+      return new Promise((res, rej) => {
+        const tx = db.transaction('models','readwrite');
+        tx.objectStore('models').put(val, key);
+        tx.oncomplete = res; tx.onerror = e => rej(e.target.error);
+      });
+    } catch { /* ignore cache errors */ }
+  }
+
+  /* ── load model bytes (cache-first) ─────────────────────── */
+  async function loadModelBytes(url, cacheKey, onProgress) {
+    // 1. Try IndexedDB cache first
+    const cached = await idbGet(cacheKey);
+    if (cached) {
+      if (onProgress) onProgress(100, 0, true);
+      return cached;
+    }
+    // 2. Fetch with progress
+    const resp = await fetch(url, { cache: 'force-cache' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const total = +resp.headers.get('content-length') || 0;
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let received = 0;
+    const t0 = performance.now();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (onProgress && total) {
+        const elapsed = (performance.now()-t0)/1000;
+        const speed   = received/elapsed/1048576;
+        onProgress(Math.round(received/total*100), speed, false);
+      }
+    }
+    const buf = new Uint8Array(received);
+    let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.length; }
+    // 3. Cache for next time
+    idbSet(cacheKey, buf.buffer).catch(()=>{});
+    return buf.buffer;
+  }
 
   /* ── DOM ────────────────────────────────────────────────── */
   const dropEl    = document.getElementById('drop');
@@ -93,44 +166,185 @@
 
   /* ── INIT ───────────────────────────────────────────────── */
   async function init() {
+    const nb = document.getElementById('navBadge');
     try {
-      let waited = 0;
-      while (typeof ort === 'undefined') {
-        await new Promise(r => setTimeout(r, 100));
-        if ((waited += 100) > 20000) throw new Error('ORT load timeout');
-      }
+      const t0 = performance.now();
 
-      ort.env.wasm.numThreads = 1;
-      ort.env.wasm.simd = true;
-      ort.env.wasm.wasmPaths = window._ortFromCDN
+      // ① Wait for ORT script AND start fetching model simultaneously
+      const ortReady = new Promise(res => {
+        const poll = setInterval(() => {
+          if (typeof ort !== 'undefined') { clearInterval(poll); res(); }
+        }, 50);
+        setTimeout(() => { clearInterval(poll); res(); }, 20000);
+      });
+
+      // ② Parallel: fetch model bytes while ORT is loading
+      //    (cache-first → if cached, resolves in < 5ms)
+      if(nb) nb.textContent = '⬇️ Loading model…';
+      const modelBytesPromise = loadModelBytes(LITE_MODEL_PATH, 'lite', (pct, spd, fromCache) => {
+        if (!fromCache && pct < 100)
+          if(nb) nb.textContent = `⬇️ Model ${pct}%  ${spd>0?spd.toFixed(1)+' MB/s':''}`;
+        else if (fromCache)
+          if(nb) nb.textContent = '⚡ From cache — initializing…';
+      });
+
+      // ③ Fetch metadata (tiny)
+      const metaPromise = fetch('./metadata.json', { cache: 'default' }).then(r => r.json());
+
+      // Wait for all three in parallel
+      await ortReady;
+      const [modelBytes, metaData] = await Promise.all([modelBytesPromise, metaPromise]);
+      META = metaData;
+
+      // ④ Configure ORT — use multi-threading if SharedArrayBuffer available
+      const canMultiThread = typeof SharedArrayBuffer !== 'undefined';
+      const threads = canMultiThread ? Math.min(navigator.hardwareConcurrency || 2, 4) : 1;
+      const wasmBase = window._ortFromCDN
         ? 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/'
         : new URL('./ort/', document.baseURI).href;
 
-      const t0 = performance.now();
-      const mr = await fetch('./metadata.json', { cache: 'no-cache' });
-      if (!mr.ok) throw new Error('metadata.json not found');
-      META = await mr.json();
+      ort.env.wasm.numThreads = threads;
+      ort.env.wasm.simd = true;
+      ort.env.wasm.wasmPaths = wasmBase;
 
-      SESSION = await ort.InferenceSession.create('./model.onnx', {
-        executionProviders: ['wasm'],
-        graphOptimizationLevel: 'all',
-      });
+      if(nb) nb.textContent = `🧠 Compiling model (${threads} thread${threads>1?'s':''})…`;
+
+      // ⑤ Try backends: WebGPU → WebGL → WASM (fastest first)
+      const backendOrder = [];
+      if (navigator.gpu) backendOrder.push('webgpu');
+      backendOrder.push('webgl', 'wasm');
+
+      let lastErr;
+      for (const backend of backendOrder) {
+        try {
+          SESSION_LITE = await ort.InferenceSession.create(modelBytes, {
+            executionProviders: [backend],
+            graphOptimizationLevel: 'all',
+          });
+          window._activeBackend = backend;
+          break;
+        } catch(e) { lastErr = e; }
+      }
+      if (!SESSION_LITE) throw lastErr || new Error('All backends failed');
+
+      SESSION = SESSION_LITE;
       META._in  = SESSION.inputNames[0];
       META._out = SESSION.outputNames[0];
 
       const dt = ((performance.now()-t0)/1000).toFixed(1);
-      const nb = document.getElementById('navBadge');
-      if (nb) nb.textContent = `YOLOv8n Fracture Detector (Lite) · ${META.img_size}px · 1 class · loaded ${dt}s`;
+      const backendLabel = {webgpu:'GPU⚡',webgl:'WebGL🎮',wasm:'WASM'}[window._activeBackend] || 'WASM';
+      const cacheLabel   = '⚡';
+      if(nb) nb.textContent =
+        `${cacheLabel} YOLOv8n Lite · ${META.img_size}px · ${backendLabel} · ${threads}T · ${dt}s`;
+
+      // Enable Full model button
+      const fullOpt = document.getElementById('optFull');
+      if (fullOpt) {
+        fullOpt.classList.remove('disabled');
+        fullOpt.title = 'YOLOv8m 98.8MB — cached after first download';
+        fullOpt.onclick = () => switchModel('full');
+      }
+      document.getElementById('optLite').onclick = () => switchModel('lite');
+
+      // Update lite card stats
+      const liteStats = document.querySelector('#optLite .mo-stats');
+      if(liteStats) liteStats.textContent = `11.7 MB · mAP50 75.8% · ${backendLabel} ${threads}T`;
 
       if (lastBitmap) runEl.disabled = false;
+      setRunSts('', '');
 
     } catch(e) {
       console.error(e);
-      const nb = document.getElementById('navBadge');
-      if (nb) nb.textContent = '⚠️ ' + e.message;
+      if(nb) nb.textContent = '⚠️ ' + e.message;
       setRunSts('Model load failed: ' + e.message, 'err');
     }
   }
+
+  /* ── MODEL SWITCH ──────────────────────────────────────── */
+  window.switchModel = async function(m) {
+    if (m === currentModel) return;
+    const nb = document.getElementById('navBadge');
+
+    if (m === 'full') {
+      // Switch to full model — lazy load if needed
+      document.getElementById('optLite').classList.remove('active');
+      document.getElementById('optFull').classList.add('active');
+
+      if (SESSION_FULL) {
+        SESSION = SESSION_FULL;
+        currentModel = 'full';
+        if(nb) nb.textContent = 'YOLOv8m Fracture Detector (Full) · 640px · 1 class · 90.4% mAP50';
+        setRunSts('✅ Switched to Full model (YOLOv8m)', 'ok');
+        return;
+      }
+
+      // Download full model
+      setRunSts('⬇️ Downloading Full model (98.8 MB)…', 'warn');
+      runEl.disabled = true;
+      if(nb) nb.textContent = '⬇️ Downloading YOLOv8m Full model (98.8 MB)…';
+
+      try {
+        const fullOpt = document.getElementById('optFull');
+        if(fullOpt) fullOpt.classList.add('downloading');
+
+        const modelBytes = await loadModelBytes(FULL_MODEL_URL, 'full', (pct, spd, fromCache) => {
+          if (fromCache) {
+            setRunSts('⚡ Loading Full model from cache…', 'warn');
+            if(nb) nb.textContent = '⚡ YOLOv8m from cache…';
+          } else {
+            setRunSts(`⬇️ Downloading Full model… ${pct}%  ${spd>0?'@ '+spd.toFixed(1)+' MB/s':''}`, 'warn');
+            if(nb) nb.textContent = `⬇️ YOLOv8m — ${pct}%`;
+          }
+        });
+
+        if(nb) nb.textContent = '🧠 Compiling Full model…';
+        const t0 = performance.now();
+        const backendOrder = [];
+        if (navigator.gpu) backendOrder.push('webgpu');
+        backendOrder.push('webgl', 'wasm');
+        let lastErr2;
+        for (const backend of backendOrder) {
+          try {
+            SESSION_FULL = await ort.InferenceSession.create(modelBytes, {
+              executionProviders: [backend],
+              graphOptimizationLevel: 'all',
+            });
+            window._fullBackend = backend;
+            break;
+          } catch(e2) { lastErr2 = e2; }
+        }
+        if (!SESSION_FULL) throw lastErr2 || new Error('All backends failed');
+
+        const dt = ((performance.now()-t0)/1000).toFixed(1);
+        const bl = {webgpu:'GPU⚡',webgl:'WebGL🎮',wasm:'WASM'}[window._fullBackend]||'WASM';
+        SESSION = SESSION_FULL;
+        currentModel = 'full';
+        if(fullOpt) fullOpt.classList.remove('downloading');
+        if(nb) nb.textContent = `⚡ YOLOv8m Full · 640px · ${bl} · ${dt}s`;
+        setRunSts('✅ Full model ready! (YOLOv8m 90.4% mAP50)', 'ok');
+        if(lastBitmap) runEl.disabled = false;
+
+      } catch(e) {
+        console.error(e);
+        setRunSts(`❌ Download failed: ${e.message}. Reverting to Lite.`, 'err');
+        document.getElementById('optFull').classList.remove('active');
+        document.getElementById('optLite').classList.add('active');
+        SESSION = SESSION_LITE;
+        currentModel = 'lite';
+        if(nb) nb.textContent = 'YOLOv8n (Lite) · Reverted due to error';
+        if(lastBitmap) runEl.disabled = false;
+      }
+
+    } else {
+      // Switch back to lite
+      document.getElementById('optFull').classList.remove('active');
+      document.getElementById('optLite').classList.add('active');
+      SESSION = SESSION_LITE;
+      currentModel = 'lite';
+      if(nb) nb.textContent = 'YOLOv8n Fracture Detector (Lite) · 640px · 1 class · 75.8% mAP50';
+      setRunSts('✅ Switched back to Lite model (YOLOv8n)', 'ok');
+    }
+  };
 
   /* ── FILE HANDLING ─────────────────────────────────────── */
   ['dragenter','dragover'].forEach(ev =>
