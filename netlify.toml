@@ -1,0 +1,35 @@
+﻿[build]
+  publish = "frontend"
+  command = ""
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+    Access-Control-Allow-Origin = "*"
+    Cache-Control = "public, max-age=3600"
+
+# Model and WASM files: long cache
+[[headers]]
+  for = "/*.onnx"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+    Content-Type  = "application/octet-stream"
+
+[[headers]]
+  for = "/*.wasm"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+    Content-Type  = "application/wasm"
+
+[[headers]]
+  for = "/*.mjs"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
+
+# SPA fallback
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200

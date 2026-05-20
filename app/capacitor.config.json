@@ -1,0 +1,12 @@
+﻿{
+  "appId": "com.medicalai.fracturedetector",
+  "appName": "Fracture Detector",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": true
+  },
+  "ios": {
+    "contentInset": "always"
+  }
+}

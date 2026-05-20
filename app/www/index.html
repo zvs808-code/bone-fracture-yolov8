@@ -1,0 +1,181 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>🦴 Bone Fracture Detector</title>
+<style>
+  :root {
+    --bg:#0b1220; --panel:#111a2e; --fg:#e8ecf3; --muted:#8a97b0;
+    --accent:#4285F4; --good:#34A853; --warn:#FBBC04; --bad:#EA4335;
+    --border:#1f2a44;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { overscroll-behavior:none; }
+  body {
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    background:linear-gradient(180deg,#0a0f1e 0%,#0b1220 100%);
+    color:var(--fg); min-height:100vh;
+    padding-top:env(safe-area-inset-top);
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  header {
+    padding:16px 20px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;
+  }
+  header h1 { margin:0; font-size:18px; font-weight:600; }
+  header .meta { font-size:11px; color:var(--muted); }
+  main {
+    max-width:1100px; margin:20px auto; padding:0 16px;
+    display:grid; grid-template-columns:1fr 1fr; gap:16px;
+  }
+  @media (max-width:820px) { main { grid-template-columns:1fr; } }
+  .card {
+    background:var(--panel); border:1px solid var(--border);
+    border-radius:12px; padding:18px;
+  }
+  .card h2 { margin:0 0 12px; font-size:14px; color:var(--muted); font-weight:500; }
+  .drop {
+    border:2px dashed #2a3960; border-radius:10px; padding:24px 16px;
+    text-align:center; cursor:pointer; transition:all .2s;
+  }
+  .drop:hover, .drop.dragover { border-color:var(--accent); background:#0d1730; }
+  .drop p { margin:6px 0 0; color:var(--muted); font-size:12px; }
+  .drop .big { font-size:28px; }
+  input[type=file] { display:none; }
+  /* Canvas container */
+  .canvas-wrap {
+    position:relative; margin-top:12px; display:none;
+    background:#000; border-radius:8px; overflow:hidden; line-height:0;
+  }
+  .canvas-wrap.active { display:block; }
+  #srcCanvas { max-width:100%; display:block; border-radius:8px; }
+  #detCanvas {
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    pointer-events:none;
+  }
+  .controls { margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  label.toggle { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); cursor:pointer; user-select:none; }
+  .slider-row { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+  .slider-row input[type=range] { width:90px; }
+  button {
+    background:var(--accent); color:white; border:none;
+    padding:10px 16px; border-radius:8px; cursor:pointer; font-size:14px;
+    font-weight:500; transition:filter .15s;
+  }
+  button:hover:not(:disabled) { filter:brightness(1.15); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  #result { min-height:120px; }
+  .det-summary {
+    padding:12px 14px; border-radius:8px;
+    background:linear-gradient(90deg,#132243,#0b1732);
+    border:1px solid var(--border); margin-bottom:12px;
+  }
+  .det-summary .label { font-size:11px; color:var(--muted); }
+  .det-summary .value { font-size:20px; font-weight:600; margin-top:2px; }
+  .det-summary .conf { font-size:12px; color:var(--muted); margin-top:4px; }
+  .det-list { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+  .det-item {
+    display:flex; align-items:center; gap:10px;
+    padding:8px 10px; border-radius:8px;
+    background:#0c1832; border:1px solid var(--border); font-size:12px;
+  }
+  .det-item .dot {
+    width:10px; height:10px; border-radius:50%; flex-shrink:0;
+  }
+  .det-item .info { flex:1; }
+  .det-item .score { font-variant-numeric:tabular-nums; color:var(--good); font-weight:600; }
+  .det-item .coords { color:var(--muted); font-size:10px; margin-top:2px; }
+  .no-det {
+    text-align:center; padding:24px; color:var(--muted); font-size:12px;
+  }
+  .no-det .ico { font-size:28px; margin-bottom:8px; }
+  .status { color:var(--muted); font-size:12px; margin-top:8px; }
+  .err { color:var(--bad); }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chip {
+    padding:3px 8px; border-radius:12px; font-size:10px;
+    background:#0c1832; border:1px solid var(--border); color:var(--muted);
+  }
+  footer { text-align:center; padding:20px; color:var(--muted); font-size:10px; }
+  .loader {
+    display:inline-block; width:14px; height:14px; border:2px solid var(--border);
+    border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite;
+    vertical-align:middle; margin-right:6px;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #modelInfo { font-size:12px; }
+  #modelInfo .stat-grid {
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; margin-top:10px;
+  }
+  #modelInfo .stat-box { padding:8px; background:#0c1832; border-radius:8px; border:1px solid var(--border); }
+  #modelInfo .stat-box .sv { font-size:18px; font-weight:700; color:var(--good); }
+  #modelInfo .stat-box .sk { font-size:10px; color:var(--muted); margin-top:2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🦴 Bone Fracture Detector</h1>
+  <div class="meta" id="modelBadge"><span class="loader"></span>모델 로딩 중…</div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1. 이미지 선택</h2>
+    <label for="fileInput" class="drop" id="drop">
+      <div class="big">📷</div>
+      <div>탭하여 X-ray 이미지 선택</div>
+      <p>지원 포맷: JPG · PNG · WebP · BMP</p>
+    </label>
+    <input type="file" id="fileInput" accept="image/*" />
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="srcCanvas"></canvas>
+      <canvas id="detCanvas"></canvas>
+    </div>
+    <div class="controls">
+      <div class="slider-row">
+        <span>신뢰도 임계값</span>
+        <input type="range" id="confSlider" min="5" max="90" value="25" step="5" />
+        <span id="confVal">0.25</span>
+      </div>
+      <button id="runBtn" disabled>🔍 탐지 실행</button>
+    </div>
+    <div class="status" id="status">이미지를 선택하면 탐지가 활성화됩니다.</div>
+  </section>
+
+  <section class="card">
+    <h2>2. 탐지 결과</h2>
+    <div id="result"><em style="color:var(--muted); font-size:12px;">아직 탐지 결과가 없습니다.</em></div>
+  </section>
+
+  <section class="card" style="grid-column:1/-1;">
+    <h2>📊 모델 정보</h2>
+    <div id="modelInfo"><span class="loader"></span> 로딩 중…</div>
+  </section>
+</main>
+
+<footer>
+  on-device ONNX Runtime Web · YOLOv8 Fracture Detector · 교육용 데모
+</footer>
+
+<!-- ONNX Runtime Web: CDN fallback -->
+<script>
+(function(){
+  var s = document.createElement('script');
+  // 1st: local ort/ folder (Capacitor/Electron 패키지 내)
+  s.src = './ort/ort.min.js';
+  s.onerror = function() {
+    // 2nd: CDN fallback (브라우저 환경)
+    var s2 = document.createElement('script');
+    s2.src = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js';
+    s2.onload = function(){ window._ortFromCDN = true; };
+    document.head.appendChild(s2);
+  };
+  document.head.appendChild(s);
+})();
+</script>
+<script src="./app.js"></script>
+</body>
+</html>
