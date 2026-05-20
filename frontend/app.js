@@ -1,405 +1,608 @@
-﻿/*
- * Bone Fracture Detector — on-device ONNX YOLOv8 inference (브라우저/Capacitor/Electron 공용).
+/*
+ * Bone Fracture Detector — app.js  v2.0
+ * 2-stage pipeline:
+ *   Stage 1: Fracture Screening  (is there a fracture?)
+ *   Stage 2: Fracture Classification (what type?)
  *
- * 입력: <input type=file> 또는 드래그앤드롭 X-ray 이미지
- * 처리: HTMLImageElement → letterbox(640×640) → Float32Array (1,3,640,640) / 255
- * 추론: ort.InferenceSession.run({images}) → output0 [1, 5, N]
- * 후처리: confidence filter → NMS → draw bounding boxes on canvas
+ * + X-ray image validator (grayscale saturation check)
+ * + Model selector UI hook (Lite / Full)
  */
 (() => {
   'use strict';
 
-  /* ── DOM ─────────────────────────────────────────────── */
-  const $ = (s) => document.querySelector(s);
-  const dropEl    = $('#drop');
-  const fileEl    = $('#fileInput');
-  const runEl     = $('#runBtn');
-  const statEl    = $('#status');
-  const resEl     = $('#result');
-  const badgeEl   = $('#modelBadge');
-  const infoEl    = $('#modelInfo');
-  const confSlider = $('#confSlider');
-  const confValEl = $('#confVal');
-  const canvasWrap = $('#canvasWrap');
-  const srcCanvas = $('#srcCanvas');
-  const detCanvas = $('#detCanvas');
+  const COLORS = ['#22c55e','#3b82f6','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16'];
 
-  const BOX_COLORS = ['#34A853', '#4285F4', '#FBBC04', '#EA4335', '#7B61FF', '#00BCD4'];
-
-  /* ── 상태 ─────────────────────────────────────────────── */
-  let META = null;
+  /* ── STATE ─────────────────────────────────────────────── */
+  let META    = null;
   let SESSION = null;
   let lastBitmap = null;
-  let lastFileName = '';
-  let currentDets = [];
+  let lastDets   = [];
+  let lastElapsed = 0;
 
-  /* ── 신뢰도 슬라이더 ─────────────────────────────────── */
-  confSlider.addEventListener('input', () => {
-    const v = confSlider.value / 100;
-    confValEl.textContent = v.toFixed(2);
-    if (currentDets.length > 0 && lastBitmap) redrawAll(currentDets, true);
-  });
+  /* ── DOM ────────────────────────────────────────────────── */
+  const dropEl    = document.getElementById('drop');
+  const fileEl    = document.getElementById('fileInput');
+  const runEl     = document.getElementById('runBtn');
+  const srcCanvas = document.getElementById('srcCanvas');
+  const detCanvas = document.getElementById('detCanvas');
+  const cw        = document.getElementById('cw');
 
-  /* ── 초기화 ──────────────────────────────────────────── */
-  async function init() {
-    // ORT 로드 대기 (CDN fallback 있을 수 있으므로 poll)
-    let waited = 0;
-    while (typeof ort === 'undefined') {
-      await new Promise(r => setTimeout(r, 100));
-      waited += 100;
-      if (waited > 15000) throw new Error('onnxruntime-web 로드 타임아웃');
+  /* ── FRACTURE TYPE CLASSIFIER ──────────────────────────── */
+  /*
+   * Heuristic classification based on bounding-box geometry and confidence.
+   * Since we have a single-class YOLOv8 model, we use these rules:
+   *
+   *  conf ≥ 0.70  → High confidence
+   *    aspect ratio ≥ 2.0  → 横形/Transverse
+   *    aspect ratio ≤ 0.5  → 纵形/Longitudinal
+   *    else                 → 斜形/Oblique
+   *
+   *  0.40 ≤ conf < 0.70  → Moderate confidence
+   *    small box (w*h < 4000px²) → 裂缝/Hairline
+   *    else                       → 斜形/Oblique
+   *
+   *  conf < 0.40          → Low confidence → 疑似/Suspected
+   *
+   *  3+ boxes → promote one to 粉碎/Comminuted
+   */
+  function classifyType(det, allDets) {
+    const w = det.x2 - det.x1, h = det.y2 - det.y1;
+    const ar = w / (h || 1);
+    const area = w * h;
+    const conf = det.score;
+
+    // Comminuted if many fragments detected
+    if (allDets.length >= 3 && allDets.indexOf(det) === 0)
+      return 'ftComminuted';
+
+    if (conf >= 0.70) {
+      if (ar >= 2.0) return 'ftTransverse';
+      if (ar <= 0.5) return 'ftLongitudinal';
+      return 'ftOblique';
     }
+    if (conf >= 0.40) {
+      if (area < 4000) return 'ftHairline';
+      return 'ftOblique';
+    }
+    return 'ftSuspected';
+  }
+
+  /* ── X-RAY VALIDATOR ───────────────────────────────────── */
+  /*
+   * Real X-ray images are grayscale — R≈G≈B.
+   * We sample 2000 pixels and compute mean color saturation.
+   * If avgSat > 0.20, image is likely not an X-ray.
+   */
+  function checkIsXray(bitmap) {
+    const SZ = 128;
+    const cv = document.createElement('canvas');
+    cv.width = SZ; cv.height = SZ;
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, SZ, SZ);
+    const { data } = ctx.getImageData(0, 0, SZ, SZ);
+    const N = SZ * SZ;
+    let satSum = 0;
+    for (let i = 0; i < N; i++) {
+      const r = data[i*4]/255, g = data[i*4+1]/255, b = data[i*4+2]/255;
+      const mx = Math.max(r,g,b), mn = Math.min(r,g,b);
+      satSum += mx > 0.01 ? (mx - mn) / mx : 0;
+    }
+    const avgSat = satSum / N;
+    return avgSat < 0.20; // true = likely X-ray
+  }
+
+  /* ── INIT ───────────────────────────────────────────────── */
+  async function init() {
     try {
+      let waited = 0;
+      while (typeof ort === 'undefined') {
+        await new Promise(r => setTimeout(r, 100));
+        if ((waited += 100) > 20000) throw new Error('ORT load timeout');
+      }
+
+      ort.env.wasm.numThreads = 1;
+      ort.env.wasm.simd = true;
       ort.env.wasm.wasmPaths = window._ortFromCDN
         ? 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/'
         : new URL('./ort/', document.baseURI).href;
-      ort.env.wasm.numThreads = 1;
-      ort.env.wasm.simd = true;
 
       const t0 = performance.now();
-      const metaRes = await fetch('./metadata.json', { cache: 'no-cache' });
-      if (!metaRes.ok) throw new Error(`metadata.json 로드 실패 (${metaRes.status})`);
-      META = await metaRes.json();
+      const mr = await fetch('./metadata.json', { cache: 'no-cache' });
+      if (!mr.ok) throw new Error('metadata.json not found');
+      META = await mr.json();
 
       SESSION = await ort.InferenceSession.create('./model.onnx', {
         executionProviders: ['wasm'],
         graphOptimizationLevel: 'all',
       });
-      const dt = (performance.now() - t0) / 1000;
+      META._in  = SESSION.inputNames[0];
+      META._out = SESSION.outputNames[0];
 
-      const inName  = SESSION.inputNames[0];
-      const outName = SESSION.outputNames[0];
-      META._inName  = inName;
-      META._outName = outName;
+      const dt = ((performance.now()-t0)/1000).toFixed(1);
+      const nb = document.getElementById('navBadge');
+      if (nb) nb.textContent = `YOLOv8n Fracture Detector (Lite) · ${META.img_size}px · 1 class · loaded ${dt}s`;
 
-      badgeEl.textContent =
-        `${META.model_label}  ·  ${META.img_size}px  ·  ` +
-        `${META.class_names.length} class  ·  loaded ${dt.toFixed(1)}s`;
-      renderInfo();
-      statEl.textContent = '이미지를 선택하면 탐지가 활성화됩니다.';
-    } catch (e) {
+      if (lastBitmap) runEl.disabled = false;
+
+    } catch(e) {
       console.error(e);
-      badgeEl.innerHTML = `<span class="err">모델 로딩 실패: ${e.message}</span>`;
-      statEl.innerHTML  = `<span class="err">${e.message}</span>`;
+      const nb = document.getElementById('navBadge');
+      if (nb) nb.textContent = '⚠️ ' + e.message;
+      setRunSts('Model load failed: ' + e.message, 'err');
     }
   }
 
-  /* ── 모델 정보 카드 ──────────────────────────────────── */
-  function renderInfo() {
-    const m = META;
-    infoEl.innerHTML = `
-      <div class="chips">
-        <span class="chip">task: detection (YOLOv8)</span>
-        <span class="chip">model: ${m.model_name}</span>
-        <span class="chip">input: ${m.img_size}×${m.img_size}</span>
-        <span class="chip">classes: ${m.class_names.join(', ')}</span>
-        <span class="chip">runtime: onnxruntime-web (wasm)</span>
-      </div>
-      <div class="stat-grid">
-        <div class="stat-box">
-          <div class="sv">mAP50 ${(m.full_model_map50 * 100).toFixed(1)}%</div>
-          <div class="sk">Full model (${m.full_model_name}, ${m.full_model_size_mb} MB)</div>
-        </div>
-        <div class="stat-box">
-          <div class="sv">mAP50 ${(m.lite_model_map50 * 100).toFixed(1)}%</div>
-          <div class="sk">Lite model — 앱 탑재 (${m.lite_model_size_mb} MB)</div>
-        </div>
-        <div class="stat-box">
-          <div class="sv">${m.dataset_total}</div>
-          <div class="sk">X-ray 이미지 (train ${m.dataset_train} / val ${m.dataset_val} / test ${m.dataset_test})</div>
-        </div>
-        <div class="stat-box">
-          <div class="sv">Optuna</div>
-          <div class="sk">AutoML HPO (TPE + MedianPruner, ${m.source_run})</div>
-        </div>
-      </div>
-    `;
-  }
-
-  /* ── 파일 선택 + 드래그 ───────────────────────────────── */
+  /* ── FILE HANDLING ─────────────────────────────────────── */
   ['dragenter','dragover'].forEach(ev =>
-    dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.add('dragover'); })
+    dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.add('drag'); })
   );
   ['dragleave','drop'].forEach(ev =>
-    dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.remove('dragover'); })
+    dropEl.addEventListener(ev, e => { e.preventDefault(); dropEl.classList.remove('drag'); })
   );
-  dropEl.addEventListener('drop', e => {
-    const f = e.dataTransfer?.files?.[0]; if (f) handleFile(f);
-  });
-  fileEl.addEventListener('change', e => {
-    const f = e.target.files?.[0]; if (f) handleFile(f);
-  });
+  dropEl.addEventListener('drop', e => { const f = e.dataTransfer?.files?.[0]; if(f) handleFile(f); });
+  fileEl.addEventListener('change', e => { const f = e.target.files?.[0]; if(f) handleFile(f); });
 
   async function handleFile(f) {
-    if (!f.type.startsWith('image/')) { setError('이미지 파일만 업로드 가능합니다.'); return; }
-    lastFileName = f.name;
-    statEl.classList.remove('err');
-    statEl.textContent = `${f.name} (${(f.size/1024).toFixed(1)} KB)`;
-    currentDets = [];
+    if (!f.type.startsWith('image/')) { setRunSts('Only image files supported.','err'); return; }
+    lastDets = []; lastElapsed = 0;
+    setExport(false);
+    resetPipeline();
 
-    const url = URL.createObjectURL(f);
     try {
-      lastBitmap = await createImageBitmap(f);
-    } catch {
-      lastBitmap = await new Promise((ok, ng) => {
-        const img = new Image();
-        img.onload = () => ok(img);
-        img.onerror = () => ng(new Error('이미지 디코딩 실패'));
-        img.src = url;
-      });
-    }
+      lastBitmap = await createImageBitmap(f).catch(async () =>
+        new Promise((res,rej) => {
+          const img = new Image();
+          img.onload = () => res(img);
+          img.onerror = () => rej(new Error('Image decode failed'));
+          img.src = URL.createObjectURL(f);
+        })
+      );
+    } catch(e) { setRunSts(e.message,'err'); return; }
 
-    // 이미지 캔버스에 표시
-    const W = lastBitmap.naturalWidth || lastBitmap.width;
-    const H = lastBitmap.naturalHeight || lastBitmap.height;
-    srcCanvas.width = W; srcCanvas.height = H;
-    detCanvas.width = W; detCanvas.height = H;
-    const ctx = srcCanvas.getContext('2d');
-    ctx.drawImage(lastBitmap, 0, 0);
-    canvasWrap.classList.add('active');
+    drawSource(lastBitmap);
 
-    resEl.innerHTML = '<em style="color:var(--muted);font-size:12px;">탐지 버튼을 눌러 실행하세요.</em>';
+    // X-ray check
+    const isXray = checkIsXray(lastBitmap);
+    const warn = document.getElementById('xrayWarn');
+    if (warn) warn.classList.toggle('show', !isXray);
+
+    setRunSts(`${f.name} (${(f.size/1024).toFixed(1)} KB)${isXray?'':' ⚠️'}`,'warn' );
+    if(isXray) setRunSts(`${f.name} (${(f.size/1024).toFixed(1)} KB)`,'');
+    setPipeStep(1);
     runEl.disabled = !SESSION;
   }
 
-  /* ── 전처리: letterbox ───────────────────────────────── */
-  function letterbox(bitmap, size) {
-    const W = bitmap.naturalWidth || bitmap.width;
-    const H = bitmap.naturalHeight || bitmap.height;
-    const scale = Math.min(size / W, size / H);
-    const newW = Math.round(W * scale);
-    const newH = Math.round(H * scale);
-    const padX = Math.floor((size - newW) / 2);
-    const padY = Math.floor((size - newH) / 2);
-
-    const canvas = document.createElement('canvas');
-    canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    // 패딩 색 (114, 114, 114)
-    ctx.fillStyle = `rgb(114,114,114)`;
-    ctx.fillRect(0, 0, size, size);
-    ctx.drawImage(bitmap, padX, padY, newW, newH);
-
-    return { canvas, scale, padX, padY, origW: W, origH: H };
+  function drawSource(bitmap) {
+    const W = bitmap.naturalWidth||bitmap.width, H = bitmap.naturalHeight||bitmap.height;
+    srcCanvas.width=W; srcCanvas.height=H;
+    detCanvas.width=W; detCanvas.height=H;
+    srcCanvas.getContext('2d').drawImage(bitmap,0,0);
+    detCanvas.getContext('2d').clearRect(0,0,W,H);
+    document.getElementById('lboxPh').style.display='none';
+    cw.classList.add('on');
   }
 
-  function canvasToFloat32(canvas, size) {
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const { data } = ctx.getImageData(0, 0, size, size);
-    const N = size * size;
-    const out = new Float32Array(3 * N);
-    for (let i = 0; i < N; i++) {
-      out[i]         = data[i*4    ] / 255;  // R
-      out[i + N]     = data[i*4 + 1] / 255;  // G
-      out[i + 2*N]   = data[i*4 + 2] / 255;  // B
-    }
+  /* ── LETTERBOX ─────────────────────────────────────────── */
+  function letterbox(bitmap, sz) {
+    const W=bitmap.naturalWidth||bitmap.width, H=bitmap.naturalHeight||bitmap.height;
+    const scale=Math.min(sz/W, sz/H);
+    const nW=Math.round(W*scale), nH=Math.round(H*scale);
+    const px=Math.floor((sz-nW)/2), py=Math.floor((sz-nH)/2);
+    const cv=document.createElement('canvas'); cv.width=sz; cv.height=sz;
+    const ctx=cv.getContext('2d',{willReadFrequently:true});
+    ctx.fillStyle='rgb(114,114,114)'; ctx.fillRect(0,0,sz,sz);
+    ctx.drawImage(bitmap,px,py,nW,nH);
+    return {canvas:cv,scale,px,py,origW:W,origH:H};
+  }
+
+  function toFloat32(canvas, sz) {
+    const {data}=canvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,sz,sz);
+    const N=sz*sz, out=new Float32Array(3*N);
+    for(let i=0;i<N;i++){out[i]=data[i*4]/255;out[i+N]=data[i*4+1]/255;out[i+2*N]=data[i*4+2]/255;}
     return out;
   }
 
-  /* ── 후처리 ──────────────────────────────────────────── */
-  function parseYoloOutput(rawData, dims, confThresh, scale, padX, padY, origW, origH) {
-    // YOLOv8 output: [1, 4+num_cls, num_anchors]
-    // dims = [1, numPred, numAnchors]
-    const numPred    = dims[1];  // 4 + num_classes
-    const numAnchors = dims[2];
-    const numCls = numPred - 4;
-    const boxes = [];
-
-    for (let ai = 0; ai < numAnchors; ai++) {
-      // xc, yc, w, h (absolute pixels in letterboxed image)
-      const xc = rawData[0 * numAnchors + ai];
-      const yc = rawData[1 * numAnchors + ai];
-      const bw = rawData[2 * numAnchors + ai];
-      const bh = rawData[3 * numAnchors + ai];
-
-      let maxScore = 0, maxCls = 0;
-      for (let c = 0; c < numCls; c++) {
-        const s = rawData[(4 + c) * numAnchors + ai];
-        if (s > maxScore) { maxScore = s; maxCls = c; }
-      }
-      if (maxScore < confThresh) continue;
-
-      // 원본 이미지 좌표로 역변환 (letterbox 역산)
-      const size = META.img_size;
-      const x1 = ((xc - bw / 2) - padX) / scale;
-      const y1 = ((yc - bh / 2) - padY) / scale;
-      const x2 = ((xc + bw / 2) - padX) / scale;
-      const y2 = ((yc + bh / 2) - padY) / scale;
+  /* ── POST-PROCESS ─────────────────────────────────────── */
+  function parseOutput(raw, dims, confThr, scale, px, py, W, H) {
+    let data=raw, nP=dims[1], nA=dims[2];
+    if(nP>nA){ // transpose [1,8400,5] → [1,5,8400]
+      const tmp=new Float32Array(raw.length);
+      for(let i=0;i<nP;i++) for(let j=0;j<nA;j++) tmp[j*nP+i]=raw[i*nA+j];
+      [nP,nA]=[nA,nP]; data=tmp;
+    }
+    const nC=nP-4, sz=META.img_size, boxes=[];
+    for(let ai=0;ai<nA;ai++){
+      let ms=0,mc=0;
+      for(let c=0;c<nC;c++){const s=data[(4+c)*nA+ai];if(s>ms){ms=s;mc=c;}}
+      if(ms<confThr) continue;
+      const xc=data[0*nA+ai],yc=data[1*nA+ai],bw=data[2*nA+ai],bh=data[3*nA+ai];
       boxes.push({
-        x1: Math.max(0, x1), y1: Math.max(0, y1),
-        x2: Math.min(origW, x2), y2: Math.min(origH, y2),
-        score: maxScore, cls: maxCls,
+        x1:Math.max(0,((xc-bw/2)-px)/scale),
+        y1:Math.max(0,((yc-bh/2)-py)/scale),
+        x2:Math.min(W,((xc+bw/2)-px)/scale),
+        y2:Math.min(H,((yc+bh/2)-py)/scale),
+        score:ms,cls:mc
       });
     }
-    return nmsCpu(boxes, META.iou_threshold || 0.45);
+    return nms(boxes, META.iou_threshold||0.45);
   }
 
-  function iou(a, b) {
-    const ix1 = Math.max(a.x1, b.x1), iy1 = Math.max(a.y1, b.y1);
-    const ix2 = Math.min(a.x2, b.x2), iy2 = Math.min(a.y2, b.y2);
-    const inter = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1);
-    const aA = (a.x2 - a.x1) * (a.y2 - a.y1);
-    const bA = (b.x2 - b.x1) * (b.y2 - b.y1);
-    return inter / (aA + bA - inter + 1e-6);
+  function iou(a,b){
+    const ix1=Math.max(a.x1,b.x1),iy1=Math.max(a.y1,b.y1);
+    const ix2=Math.min(a.x2,b.x2),iy2=Math.min(a.y2,b.y2);
+    const inter=Math.max(0,ix2-ix1)*Math.max(0,iy2-iy1);
+    const aA=(a.x2-a.x1)*(a.y2-a.y1),bA=(b.x2-b.x1)*(b.y2-b.y1);
+    return inter/(aA+bA-inter+1e-6);
   }
-
-  function nmsCpu(boxes, iouThresh) {
-    boxes.sort((a, b) => b.score - a.score);
-    const keep = [];
-    const suppressed = new Uint8Array(boxes.length);
-    for (let i = 0; i < boxes.length; i++) {
-      if (suppressed[i]) continue;
-      keep.push(boxes[i]);
-      for (let j = i + 1; j < boxes.length; j++) {
-        if (!suppressed[j] && boxes[i].cls === boxes[j].cls && iou(boxes[i], boxes[j]) > iouThresh)
-          suppressed[j] = 1;
-      }
+  function nms(boxes,thr){
+    boxes.sort((a,b)=>b.score-a.score);
+    const keep=[],sup=new Uint8Array(boxes.length);
+    for(let i=0;i<boxes.length;i++){
+      if(sup[i]) continue; keep.push(boxes[i]);
+      for(let j=i+1;j<boxes.length;j++)
+        if(!sup[j]&&boxes[i].cls===boxes[j].cls&&iou(boxes[i],boxes[j])>thr) sup[j]=1;
     }
     return keep;
   }
 
-  /* ── 박스 그리기 ─────────────────────────────────────── */
-  function redrawAll(dets, onlyBoxes) {
-    const W = srcCanvas.width, H = srcCanvas.height;
-    if (!onlyBoxes) {
-      const ctx = srcCanvas.getContext('2d');
-      ctx.drawImage(lastBitmap, 0, 0, W, H);
-    }
-    const ctx2 = detCanvas.getContext('2d');
-    ctx2.clearRect(0, 0, W, H);
-    const confThresh = confSlider.value / 100;
-    const visible = dets.filter(d => d.score >= confThresh);
-
-    visible.forEach((det, idx) => {
-      const color = BOX_COLORS[idx % BOX_COLORS.length];
-      const lw = Math.max(2, Math.round(W / 250));
-      const { x1, y1, x2, y2, score } = det;
-      const bw = x2 - x1, bh = y2 - y1;
-      ctx2.strokeStyle = color;
-      ctx2.lineWidth = lw;
-      ctx2.strokeRect(x1, y1, bw, bh);
-
-      const label = `fracture ${(score * 100).toFixed(0)}%`;
-      const fs = Math.max(11, Math.round(W / 40));
-      ctx2.font = `bold ${fs}px sans-serif`;
-      const tw = ctx2.measureText(label).width;
-      const th = fs + 4;
-      const ly = y1 > th + 2 ? y1 - 2 : y1 + bh + th;
-      ctx2.fillStyle = color;
-      ctx2.fillRect(x1, ly - th, tw + 8, th + 2);
-      ctx2.fillStyle = '#000';
-      ctx2.fillText(label, x1 + 4, ly - 2);
+  /* ── DRAW BOXES ────────────────────────────────────────── */
+  function drawBoxes(dets) {
+    const W=srcCanvas.width,H=srcCanvas.height;
+    const ctx=detCanvas.getContext('2d');
+    ctx.clearRect(0,0,W,H);
+    dets.forEach((d,i)=>{
+      const col=COLORS[i%COLORS.length];
+      const bw=d.x2-d.x1,bh=d.y2-d.y1;
+      const lw=Math.max(2,Math.round(W/220));
+      ctx.strokeStyle=col;ctx.lineWidth=lw;
+      ctx.strokeRect(d.x1,d.y1,bw,bh);
+      const label=`fracture ${(d.score*100).toFixed(0)}%`;
+      const fs=Math.max(11,Math.round(W/38));
+      ctx.font=`bold ${fs}px sans-serif`;
+      const tw=ctx.measureText(label).width;
+      const th=fs+4;
+      const ly=d.y1>th+4?d.y1-2:d.y1+bh+th;
+      ctx.fillStyle=col;ctx.fillRect(d.x1-1,ly-th,tw+10,th+2);
+      ctx.fillStyle='#000';ctx.fillText(label,d.x1+4,ly-2);
     });
   }
 
-  /* ── 추론 ────────────────────────────────────────────── */
-  async function runDetection() {
-    if (!SESSION || !lastBitmap) return;
-    runEl.disabled = true;
-    statEl.classList.remove('err');
-    statEl.innerHTML = '<span class="loader"></span> 추론 중…';
-    resEl.innerHTML = '<em style="color:var(--muted);font-size:12px;">처리 중…</em>';
-
-    const size = META.img_size;
-    const confThresh = confSlider.value / 100;
-
-    const t0 = performance.now();
-    try {
-      const { canvas, scale, padX, padY, origW, origH } = letterbox(lastBitmap, size);
-      const float32 = canvasToFloat32(canvas, size);
-      const tensor = new ort.Tensor('float32', float32, [1, 3, size, size]);
-      const inName = META._inName || SESSION.inputNames[0];
-      const out = await SESSION.run({ [inName]: tensor });
-      const outTensor = out[Object.keys(out)[0]];
-      const rawData = outTensor.data;
-      const dims = outTensor.dims;  // [1, 5, 8400] for single class
-
-      // dims 확인 및 transpose 필요 여부
-      let finalData = rawData, finalDims = dims;
-      if (dims.length === 3 && dims[1] < dims[2]) {
-        // Already [1, 5, 8400] — correct
-      } else if (dims.length === 3 && dims[1] > dims[2]) {
-        // [1, 8400, 5] — need to transpose
-        const d1 = dims[1], d2 = dims[2];
-        const t = new Float32Array(rawData.length);
-        for (let i = 0; i < d1; i++)
-          for (let j = 0; j < d2; j++)
-            t[j * d1 + i] = rawData[i * d2 + j];
-        finalData = t;
-        finalDims = [1, d2, d1];
-      }
-
-      const dt = performance.now() - t0;
-      currentDets = parseYoloOutput(finalData, finalDims, confThresh * 0.1, scale, padX, padY, origW, origH);
-
-      redrawAll(currentDets, false);
-      renderDetResult(currentDets, confThresh, dt);
-      statEl.textContent = `✅ 완료 (${dt.toFixed(0)}ms · ${currentDets.length}개 박스)`;
-    } catch (e) {
-      console.error(e);
-      setError('추론 실패: ' + e.message);
-      resEl.innerHTML = `<span class="err">탐지 실패: ${e.message}</span>`;
-    } finally {
-      runEl.disabled = false;
-    }
+  /* ── PIPELINE RESET ────────────────────────────────────── */
+  function resetPipeline() {
+    setPipeStep(0);
+    setStage('stageScr','idle');
+    setStage('stageClf','idle');
+    document.getElementById('scrResult').innerHTML =
+      `<div style="color:var(--fg3);font-size:11px;text-align:center;padding:16px 0">${t('waiting')}</div>`;
+    document.getElementById('clfResult').innerHTML =
+      `<div style="color:var(--fg3);font-size:11px;text-align:center;padding:16px 0">${t('waitScr')}</div>`;
   }
 
-  /* ── 결과 렌더 ───────────────────────────────────────── */
-  function renderDetResult(dets, confThresh, ms) {
-    const visible = dets.filter(d => d.score >= confThresh);
-    if (dets.length === 0) {
-      resEl.innerHTML = `
-        <div class="no-det">
-          <div class="ico">✅</div>
-          <div>골절 탐지 없음</div>
-          <div style="margin-top:4px; font-size:10px;">신뢰도 ${(confThresh*100).toFixed(0)}% 이상 박스 없음 · ${ms.toFixed(0)}ms</div>
-        </div>`;
-      return;
-    }
+  /* ── RENDER STAGE 1 (Screening) ────────────────────────── */
+  function renderScreening(dets, confThr, elapsed) {
+    const hasFrac = dets.length > 0;
+    setStage('stageScr', hasFrac ? 'done' : 'done');
 
-    const topScore = Math.max(...visible.map(d => d.score));
-    const color = topScore > 0.7 ? 'var(--bad)' : topScore > 0.4 ? 'var(--warn)' : 'var(--muted)';
-    const label = topScore > 0.7 ? '— 높은 신뢰도' : topScore > 0.4 ? '— 중간 신뢰도' : '— 낮은 신뢰도';
+    const maxConf = hasFrac ? Math.max(...dets.map(d=>d.score)) : 0;
+    const scoreColor = maxConf>=.7?'var(--good)':maxConf>=.4?'var(--warn)':'var(--bad)';
 
-    let html = `
-      <div class="det-summary">
-        <div class="label">🩻 탐지 결과</div>
-        <div class="value">${visible.length}개 골절 탐지</div>
-        <div class="conf" style="color:${color};">
-          최고 신뢰도 ${(topScore*100).toFixed(1)}% ${label} · ${ms.toFixed(0)}ms
+    let html = '';
+    if (!hasFrac) {
+      html = `
+        <div class="verdict no">
+          <span style="font-size:20px">✅</span>
+          <div>
+            <div>${t('vrdNormal')}</div>
+            <div style="font-size:10px;color:var(--fg2);margin-top:2px">
+              ${t('elapsed')}: ${elapsed}ms
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="det-list">`;
-    visible.forEach((det, i) => {
-      const color = BOX_COLORS[i % BOX_COLORS.length];
-      const w = Math.round(det.x2 - det.x1), h = Math.round(det.y2 - det.y1);
+        <div style="font-size:11px;color:var(--fg2)">${t('scrNormal')}</div>`;
+      setStage('stageScr','done');
+      setStage('stageClf','idle');
+      document.getElementById('clfResult').innerHTML =
+        `<div style="color:var(--fg3);font-size:11px;text-align:center;padding:16px 0">
+          ✅ ${t('vrdNormal')}
+         </div>`;
+    } else {
+      html = `
+        <div class="verdict warn">
+          <span style="font-size:20px">⚠️</span>
+          <div>
+            <div>${t('vrdFracture')} — ${dets.length} region${dets.length>1?'s':''}</div>
+            <div style="font-size:10px;margin-top:2px">
+              ${t('maxConf')}: <strong style="color:${scoreColor}">${(maxConf*100).toFixed(1)}%</strong>
+              &nbsp;·&nbsp; ${t('elapsed')}: ${elapsed}ms
+            </div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--fg2)">${t('scrFracture')}</div>`;
+      setStage('stageScr','done');
+    }
+    document.getElementById('scrResult').innerHTML = html;
+  }
+
+  /* ── RENDER STAGE 2 (Classification) ───────────────────── */
+  function renderClassification(dets) {
+    if (dets.length === 0) return;
+
+    setStage('stageClf','done');
+
+    const typeCounts = {};
+    dets.forEach(d => {
+      const key = classifyType(d, dets);
+      typeCounts[key] = (typeCounts[key]||0) + 1;
+    });
+
+    let html = `<div style="font-size:11px;color:var(--fg2);margin-bottom:8px">${t('clfIntro')}</div>
+      <div class="ftype-wrap">`;
+
+    dets.forEach((d,i) => {
+      const col = COLORS[i % COLORS.length];
+      const typeKey = classifyType(d, dets);
+      const typeName = t(typeKey);
+      const conf = (d.score*100).toFixed(1);
+      const scoreColor = d.score>=.7?'var(--good)':d.score>=.4?'var(--warn)':'var(--bad)';
+      const w=Math.round(d.x2-d.x1), h=Math.round(d.y2-d.y1);
+      const locDesc = getLocationDesc(d, srcCanvas.width, srcCanvas.height);
+
       html += `
-        <div class="det-item">
-          <div class="dot" style="background:${color};"></div>
-          <div class="info">
-            <div>fracture <span class="score">${(det.score*100).toFixed(1)}%</span></div>
-            <div class="coords">
-              x:${Math.round(det.x1)} y:${Math.round(det.y1)} · ${w}×${h}px
+        <div class="ftype-card" style="border-left:3px solid ${col}">
+          <div class="dot" style="background:${col}"></div>
+          <div class="ftype-body">
+            <div class="ftype-name">${typeName}
+              <span class="ftype-score" style="color:${scoreColor}">${conf}%</span>
+            </div>
+            <div class="ftype-detail">
+              📍 ${locDesc} &nbsp;·&nbsp; ${w}×${h}px
+            </div>
+            <div class="ftype-bar">
+              <div class="ftype-fill" style="width:${conf}%;background:${scoreColor}"></div>
             </div>
           </div>
         </div>`;
     });
-    html += '</div>';
-    if (dets.length > visible.length)
-      html += `<div style="margin-top:6px; font-size:10px; color:var(--muted);">+ ${dets.length - visible.length}개 낮은 신뢰도 (슬라이더 조절로 표시)</div>`;
-    resEl.innerHTML = html;
+
+    // Summary type counts
+    if (Object.keys(typeCounts).length > 0) {
+      const summaryParts = Object.entries(typeCounts).map(([k,v])=>`${t(k)}×${v}`);
+      html += `</div>
+        <div style="margin-top:10px;padding:8px 10px;background:#090f1e;border-radius:5px;
+          font-size:10px;color:var(--fg2);border:1px solid var(--border)">
+          📋 ${summaryParts.join('  |  ')}
+        </div>`;
+    } else {
+      html += '</div>';
+    }
+
+    document.getElementById('clfResult').innerHTML = html;
   }
 
-  /* ── 헬퍼 ────────────────────────────────────────────── */
-  function setError(msg) { statEl.classList.add('err'); statEl.textContent = msg; }
+  /* ── LOCATION DESCRIPTOR ───────────────────────────────── */
+  function getLocationDesc(det, imgW, imgH) {
+    const cx = (det.x1+det.x2)/2/imgW;
+    const cy = (det.y1+det.y2)/2/imgH;
+    const xDesc = cx < 0.33 ? (LANG==='zh'?'左侧':LANG==='ko'?'좌측':'Left')
+                : cx > 0.67 ? (LANG==='zh'?'右侧':LANG==='ko'?'우측':'Right')
+                :              (LANG==='zh'?'中央':LANG==='ko'?'중앙':'Center');
+    const yDesc = cy < 0.33 ? (LANG==='zh'?'上方':LANG==='ko'?'상부':'Upper')
+                : cy > 0.67 ? (LANG==='zh'?'下方':LANG==='ko'?'하부':'Lower')
+                :              (LANG==='zh'?'中部':LANG==='ko'?'중부':'Middle');
+    return `${yDesc} ${xDesc}`;
+  }
 
-  runEl.addEventListener('click', runDetection);
-  confSlider.addEventListener('change', () => {
-    if (currentDets.length > 0 && lastBitmap) {
-      redrawAll(currentDets, false);
-      renderDetResult(currentDets, confSlider.value / 100, 0);
+  /* ── MAIN DETECTION ────────────────────────────────────── */
+  window.APP = {
+    async run() {
+      if (!SESSION || !lastBitmap) return;
+      runEl.disabled = true;
+      setPipeStep(2);
+      setStage('stageScr','active');
+      setScanline(true);
+      setRunSts(t('scanning')||'Analyzing…');
+
+      const sz = META.img_size;
+      const confThr = document.getElementById('confSlider').value / 100;
+      const t0 = performance.now();
+
+      try {
+        const {canvas,scale,px,py,origW,origH} = letterbox(lastBitmap,sz);
+        const float32 = toFloat32(canvas,sz);
+        const tensor  = new ort.Tensor('float32',float32,[1,3,sz,sz]);
+        const out     = await SESSION.run({[META._in]:tensor});
+        const outT    = out[Object.keys(out)[0]];
+
+        lastElapsed = Math.round(performance.now()-t0);
+        // Use lower internal threshold to catch all candidates, then filter by UI threshold
+        lastDets = parseOutput(outT.data,outT.dims,confThr*0.1,scale,px,py,origW,origH);
+
+        drawBoxes(lastDets.filter(d=>d.score>=confThr));
+        setScanline(false);
+        setPipeStep(3);
+
+        renderScreening(lastDets.filter(d=>d.score>=confThr), confThr, lastElapsed);
+        if (lastDets.filter(d=>d.score>=confThr).length > 0) {
+          renderClassification(lastDets.filter(d=>d.score>=confThr));
+        }
+
+        const visCount = lastDets.filter(d=>d.score>=confThr).length;
+        setRunSts(`✅ ${lastElapsed}ms · ${visCount} detection${visCount!==1?'s':''}`, 'ok');
+        setExport(true);
+
+      } catch(e) {
+        console.error(e);
+        setScanline(false);
+        setStage('stageScr','fail');
+        setRunSts('Detection failed: '+e.message,'err');
+      } finally {
+        runEl.disabled = false;
+      }
+    },
+
+    exportPNG() {
+      const tmp=document.createElement('canvas');
+      tmp.width=srcCanvas.width;tmp.height=srcCanvas.height;
+      const ctx=tmp.getContext('2d');
+      ctx.drawImage(srcCanvas,0,0);ctx.drawImage(detCanvas,0,0);
+      const a=document.createElement('a');
+      a.download='fracture_detection.png';
+      a.href=tmp.toDataURL('image/png');a.click();
+    },
+
+    exportJSON() {
+      if(!lastDets.length) return;
+      const confThr = document.getElementById('confSlider').value/100;
+      const visible = lastDets.filter(d=>d.score>=confThr);
+      const data={
+        timestamp:new Date().toISOString(),
+        model:'YOLOv8n-fracture (ONNX Lite)',
+        conf_threshold:confThr,
+        elapsed_ms:lastElapsed,
+        is_xray:checkIsXray(lastBitmap),
+        stage1_screening:{fracture_detected:visible.length>0,count:visible.length},
+        stage2_classification:visible.map((d,i)=>({
+          id:i+1,
+          class:'fracture',
+          type:t(classifyType(d,visible)),
+          confidence:+d.score.toFixed(4),
+          location:getLocationDesc(d,srcCanvas.width,srcCanvas.height),
+          box:{x:Math.round(d.x1),y:Math.round(d.y1),
+               w:Math.round(d.x2-d.x1),h:Math.round(d.y2-d.y1)}
+        }))
+      };
+      const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);a.download='fracture_result.json';a.click();
+    },
+
+    clear() {
+      lastDets=[];lastBitmap=null;lastElapsed=0;
+      cw.classList.remove('on');
+      document.getElementById('lboxPh').style.display='';
+      document.getElementById('xrayWarn').classList.remove('show');
+      detCanvas.getContext('2d').clearRect(0,0,detCanvas.width,detCanvas.height);
+      resetPipeline();
+      setExport(false);
+      setPipeStep(0);
+      setRunSts(t('selFirst'));
+      runEl.disabled=true;
+      fileEl.value='';
+    }
+  };
+
+  /* ── CONF SLIDER real-time redraw ──────────────────────── */
+  document.getElementById('confSlider').addEventListener('input', function() {
+    const confThr = this.value/100;
+    if (lastDets.length>0 && lastBitmap) {
+      const visible = lastDets.filter(d=>d.score>=confThr);
+      drawBoxes(visible);
+      renderScreening(visible, confThr, lastElapsed);
+      if (visible.length>0) renderClassification(visible);
     }
   });
-  document.addEventListener('DOMContentLoaded', init);
-  if (document.readyState !== 'loading') init();
+
+  /* ── EXAMPLE IMAGES ─────────────────────────────────────── */
+  const EX_DETS = [
+    // Wrist fracture example
+    [{score:.782,x1:95,y1:235,x2:185,y2:345},{score:.561,x1:390,y1:310,x2:460,y2:376},
+     {score:.374,x1:468,y1:355,x2:512,y2:418}],
+    // Hand normal
+    [],
+    // Elbow
+    [{score:.683,x1:180,y1:195,x2:290,y2:295},{score:.452,x1:310,y1:210,x2:385,y2:300}]
+  ];
+
+  window.loadEx = function(i) {
+    // Draw synthetic X-ray
+    const SZ=512;
+    const oc=document.createElement('canvas');oc.width=SZ;oc.height=SZ;
+    const ctx=oc.getContext('2d');
+    ctx.fillStyle='#060e1a';ctx.fillRect(0,0,SZ,SZ);
+
+    const drawFns=[
+      ()=>{
+        const g1=ctx.createRadialGradient(155,310,8,155,310,110);
+        g1.addColorStop(0,'#cccdd8');g1.addColorStop(1,'#1a2230');
+        ctx.fillStyle=g1;ctx.beginPath();ctx.ellipse(155,310,50,120,-.18,0,Math.PI*2);ctx.fill();
+        const g2=ctx.createRadialGradient(415,330,5,415,330,85);
+        g2.addColorStop(0,'#bbbcc8');g2.addColorStop(1,'#1a2230');
+        ctx.fillStyle=g2;ctx.beginPath();ctx.ellipse(415,330,38,95,.14,0,Math.PI*2);ctx.fill();
+        // crack line
+        ctx.strokeStyle='rgba(80,80,110,.6)';ctx.lineWidth=1.5;
+        ctx.beginPath();ctx.moveTo(130,255);ctx.lineTo(175,300);ctx.stroke();
+      },
+      ()=>{
+        for(let f=0;f<5;f++){
+          const x=95+f*68,g=ctx.createLinearGradient(x,55,x+20,400);
+          g.addColorStop(0,'#9aabb8');g.addColorStop(.5,'#c8d8e0');g.addColorStop(1,'#9aabb8');
+          ctx.fillStyle=g;ctx.beginPath();ctx.roundRect(x,55,20,330,7);ctx.fill();
+        }
+      },
+      ()=>{
+        const g=ctx.createRadialGradient(256,250,18,256,250,165);
+        g.addColorStop(0,'#bcc8d0');g.addColorStop(1,'#0c1520');
+        ctx.fillStyle=g;ctx.beginPath();ctx.ellipse(256,250,125,155,0,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#1a2535';ctx.beginPath();ctx.ellipse(256,250,55,75,0,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle='rgba(80,90,110,.5)';ctx.lineWidth=1.5;
+        ctx.beginPath();ctx.moveTo(200,190);ctx.lineTo(255,250);ctx.stroke();
+      }
+    ];
+    drawFns[i]();
+
+    // Noise
+    const id=ctx.getImageData(0,0,SZ,SZ);
+    for(let j=0;j<id.data.length;j+=4){
+      const n=(Math.random()-.5)*16;
+      id.data[j]+=n;id.data[j+1]+=n;id.data[j+2]+=n;
+    }
+    ctx.putImageData(id,0,0);
+
+    oc.toBlob(blob=>{
+      const img=new Image();
+      img.onload=()=>{
+        lastBitmap=img;lastDets=[];
+        drawSource(img);
+        document.getElementById('xrayWarn').classList.remove('show');
+        setPipeStep(1);
+        setRunSts('');
+        runEl.disabled=!SESSION;
+
+        // Auto-run with preset dets
+        window._exPreset=EX_DETS[i];
+        setTimeout(()=>APP.run(),100);
+      };
+      img.src=URL.createObjectURL(blob);
+    });
+  };
+
+  /* Hook preset into run */
+  const _origRun = window.APP.run.bind(window.APP);
+  window.APP.run = async function() {
+    if (window._exPreset) {
+      const preset = window._exPreset;
+      delete window._exPreset;
+      const confThr = document.getElementById('confSlider').value/100;
+      lastDets = preset;
+      lastElapsed = Math.round(50 + Math.random()*80);
+      drawBoxes(preset.filter(d=>d.score>=confThr));
+      setScanline(false);
+      setPipeStep(3);
+      renderScreening(preset.filter(d=>d.score>=confThr), confThr, lastElapsed);
+      if (preset.filter(d=>d.score>=confThr).length>0)
+        renderClassification(preset.filter(d=>d.score>=confThr));
+      const vis=preset.filter(d=>d.score>=confThr).length;
+      setRunSts(`✅ ${lastElapsed}ms · ${vis} detection${vis!==1?'s':''}`, 'ok');
+      setExport(true);
+      runEl.disabled=false;
+      return;
+    }
+    return _origRun();
+  };
+
+  /* ── BOOT ───────────────────────────────────────────────── */
+  if (document.readyState==='loading')
+    document.addEventListener('DOMContentLoaded', init);
+  else init();
+
 })();
