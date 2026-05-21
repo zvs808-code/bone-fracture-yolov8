@@ -459,7 +459,7 @@ const I18N={
     selectImg:'X-ray 이미지 선택',tapSel:'탭하여 X-ray 이미지 선택',fmts:'JPG·PNG·WebP·BMP',
     lite:'라이트',full:'풀',fast:'빠름',accurate:'정확',
     localProc:'온디바이스 · 업로드 없음',tryEx:'예시:',
-    ex0:'손목 (골절)',ex1:'손 (정상)',ex2:'팔꿈치',
+    ex0:'손목 (골절)',ex1:'전완부 (골절)',ex2:'팔꿈치 (골절)',
     confThr:'신뢰도 임계값',runDet:'탐지 실행',selFirst:'이미지를 선택해 주세요.',
     pipeline:'탐지 파이프라인',
     psUp:'업로드',psScr:'골절 선별',psClf:'유형 분류',
@@ -497,7 +497,7 @@ const I18N={
     selectImg:'Select X-ray',tapSel:'Tap to select X-ray image',fmts:'JPG·PNG·WebP·BMP',
     lite:'Lite',full:'Full',fast:'Fast',accurate:'Accurate',
     localProc:'On-device · No upload',tryEx:'Try:',
-    ex0:'Wrist (fracture)',ex1:'Hand (normal)',ex2:'Elbow',
+    ex0:'Wrist (fracture)',ex1:'Forearm (fracture)',ex2:'Elbow (fracture)',
     confThr:'Conf. Threshold',runDet:'Run Detection',selFirst:'Select an image to begin.',
     pipeline:'Detection Pipeline',
     psUp:'Upload',psScr:'Screen',psClf:'Classify',
@@ -533,7 +533,7 @@ const I18N={
     selectImg:'选择X光图像',tapSel:'点击选择X光图像',fmts:'JPG·PNG·WebP·BMP',
     lite:'轻量',full:'完整',fast:'快速',accurate:'精确',
     localProc:'本地处理 · 不上传',tryEx:'示例：',
-    ex0:'手腕（骨折）',ex1:'手掌（正常）',ex2:'肘部',
+    ex0:'腕关节（骨折）',ex1:'前臂（骨折）',ex2:'肘部（骨折）',
     confThr:'置信度阈值',runDet:'运行检测',selFirst:'请先选择图像。',
     pipeline:'检测流程',
     psUp:'上传',psScr:'筛查',psClf:'分类',
@@ -619,6 +619,7 @@ function setExport(on){['btnPNG','btnJSON','btnClear'].forEach(id=>{const e=docu
   document.head.appendChild(s);
 })();
 </script>
+<script src="./examples_data.js"></script>
 <script src="./app.js"></script>
 </body>
 </html>
