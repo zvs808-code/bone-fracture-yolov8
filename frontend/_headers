@@ -1,0 +1,42 @@
+# Netlify HTTP headers
+
+# ONNX models — long cache; immutable so reuploads need a name change
+/model.onnx
+  Cache-Control: public, max-age=2592000, immutable
+  Access-Control-Allow-Origin: *
+
+/model_classifier.onnx
+  Cache-Control: public, max-age=2592000, immutable
+  Access-Control-Allow-Origin: *
+
+# Multi-Task classifier — same long-immutable cache; filename versioning is the rollback knob
+/models/model_multitask.onnx
+  Cache-Control: public, max-age=2592000, immutable
+  Access-Control-Allow-Origin: *
+
+# Evaluation chart PNGs — long cache
+/eval_*.png
+  Cache-Control: public, max-age=2592000, immutable
+
+# Metadata is small; short cache so version bumps propagate quickly
+/metadata.json
+  Cache-Control: public, max-age=300
+
+# JS — always revalidate so code updates show up immediately (no stale cache)
+/app.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/mtl_inference.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+# HTML — always revalidate so UI updates show up immediately
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Default: short cache + security headers
+# COOP/COEP enables SharedArrayBuffer → multi-threaded WASM inference (2-4× faster on multi-core devices)
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless

@@ -3,14 +3,16 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<meta name="description" content="YOLOv8-based bone fracture detector for X-ray images, Optuna AutoML HPO, on-device ONNX inference. Educational and research use only — not a medical device."/>
+<meta name="theme-color" content="#07101f"/>
 <title>🦴 Bone Fracture Detector</title>
 <style>
 :root{
   --bg:#07101f;--bg2:#0c1629;--panel:#111b30;
-  --border:#1a2540;--border2:#243050;
-  --fg:#dde4f0;--fg2:#8a9bb8;--fg3:#4a5a78;
-  --accent:#3d85ff;--accent2:#1a5ce5;
-  --good:#22c55e;--warn:#f59e0b;--bad:#ef4444;
+  --border:#2a3a5a;--border2:#3d5078;
+  --fg:#f0f5ff;--fg2:#b8c5dc;--fg3:#8a9ab5;
+  --accent:#5b9eff;--accent2:#3d85ff;
+  --good:#4ade80;--warn:#fbbf24;--bad:#f87171;
   --scan:#00d4ff;--lbox:#000810;
   --r:14px;--rs:8px;--rx:5px;
 }
@@ -40,6 +42,19 @@ nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
 .nav-lnk{padding:5px 10px;font-size:11px;color:var(--fg2);background:transparent;
   border:1px solid var(--border2);border-radius:5px;cursor:pointer;transition:all .2s}
 .nav-lnk:hover{color:var(--fg);background:#1a2540}
+
+/* MOBILE NAV — at iPhone widths, hide model badge and shrink controls */
+@media (max-width:640px){
+  nav{padding:0 12px;gap:6px}
+  #navBadge{display:none}
+  .nav-logo span{font-size:13px}
+  .nav-icon{width:28px;height:28px;font-size:15px}
+  .nav-lnk{padding:4px 7px;font-size:10px}
+  .lang-btn{padding:3px 6px}
+}
+@media (max-width:380px){
+  .nav-logo span{display:none}  /* very narrow: icon only */
+}
 
 /* LAYOUT */
 .wrap{flex:1;max-width:1160px;width:100%;margin:0 auto;
@@ -72,14 +87,24 @@ nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.3)} 50%{box-shadow:0 0 0 5px rgba(245,158,11,0)}}
 
 /* LIGHTBOX */
-.lbox{position:relative;background:var(--lbox);border:2px dashed #1e3050;
-  border-radius:10px;min-height:240px;display:flex;align-items:center;
-  justify-content:center;cursor:pointer;transition:border-color .2s;overflow:hidden;flex-direction:column}
-.lbox:hover,.lbox.drag{border-color:var(--accent)}
-.lbox-ph{text-align:center;color:var(--fg3);pointer-events:none}
-.lbox-ph .ico{font-size:36px;margin-bottom:8px;display:block}
-.lbox-ph .t1{font-size:13px;color:var(--fg2);font-weight:500}
-.lbox-ph .t2{font-size:10px;margin-top:3px}
+.lbox{position:relative;background:var(--lbox);border:3px dashed var(--accent);
+  border-radius:10px;min-height:300px;display:flex;align-items:center;
+  justify-content:center;cursor:pointer;transition:all .2s;overflow:hidden;flex-direction:column;
+  animation:lboxPulse 2.2s ease-in-out infinite}
+.lbox.has-img{animation:none;border:2px solid var(--border2)}
+.lbox:hover,.lbox.drag{border-color:var(--accent);transform:scale(1.005)}
+.lbox-ph{text-align:center;color:var(--fg);pointer-events:none;padding:20px}
+.lbox-ph .ico{font-size:72px;margin-bottom:14px;display:block;
+  filter:drop-shadow(0 0 12px rgba(91,158,255,.4))}
+.lbox-ph .t0{font-size:11px;font-weight:700;color:var(--accent);
+  background:rgba(91,158,255,.12);padding:4px 10px;border-radius:12px;
+  display:inline-block;margin-bottom:10px;letter-spacing:.5px}
+.lbox-ph .t1{font-size:18px;color:var(--fg);font-weight:700;line-height:1.4}
+.lbox-ph .t2{font-size:12px;margin-top:8px;color:var(--fg2)}
+@keyframes lboxPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(91,158,255,.0)}
+  50%    {box-shadow:0 0 0 10px rgba(91,158,255,.15)}
+}
 input[type=file]{display:none}
 .cw{position:relative;width:100%;display:none}
 .cw.on{display:block}
@@ -97,13 +122,29 @@ input[type=file]{display:none}
   background:#1a0f00;border:1px solid #4a2a00;font-size:11px;color:#f59e0b}
 .xray-warn.show{display:flex;align-items:center;gap:7px}
 
+/* FIRST-LOAD INFO BANNER */
+.load-info{display:flex;align-items:flex-start;gap:8px;
+  background:rgba(91,158,255,.08);border:1px solid rgba(91,158,255,.28);
+  border-radius:var(--rs);padding:8px 12px;margin-bottom:12px;
+  font-size:11px;color:var(--fg2);line-height:1.55}
+.load-info .ico{font-size:14px;flex-shrink:0;margin-top:1px}
+.load-info strong{color:var(--fg);font-weight:700}
+
+/* CLASSIFIER RELIABILITY GATING */
+.clf-banner{font-size:11px;border-radius:var(--rs);padding:8px 11px;margin-bottom:10px;line-height:1.55;font-weight:500}
+.clf-banner.warn{background:rgba(251,191,36,.10);border:1px solid rgba(251,191,36,.38);color:#fbe1a0}
+.clf-banner.ood{background:rgba(248,113,113,.10);border:1px solid rgba(248,113,113,.42);color:#fca5a5}
+.clf-banner.info{background:rgba(91,158,255,.08);border:1px solid rgba(91,158,255,.30);color:#b8c5dc}
+.clf-dim{opacity:.55;filter:grayscale(.55)}
+
 /* LOCAL BADGE */
 .local-badge{display:inline-flex;align-items:center;gap:4px;background:#0a1a10;
   border:1px solid #1a3a22;color:var(--good);font-size:10px;
   padding:3px 9px;border-radius:20px;font-weight:500;margin-top:8px}
 
-/* EXAMPLES */
-.ex-row{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center}
+/* EXAMPLES — hidden (image assets not bundled; would show "load failed") */
+.ex-row{display:none !important}
+.ex-row-original{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center}
 .ex-btn{padding:5px 10px;font-size:10px;color:var(--fg2);background:#0c1629;
   border:1px solid var(--border2);border-radius:5px;cursor:pointer;transition:all .15s;font-weight:500}
 .ex-btn:hover{color:var(--accent);border-color:var(--accent)}
@@ -200,6 +241,88 @@ input[type=file]{display:none}
 .how-item .hd{font-size:9px;color:var(--fg2);line-height:1.5}
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:7px}
 .stat-box{padding:10px;background:#0c1629;border-radius:var(--rs);border:1px solid var(--border)}
+
+/* ════════════════════════════════════════════════════════════════════════
+   HERO + USP + WORKFLOW  (v13-marketing) — full-bleed bands above the app
+   ════════════════════════════════════════════════════════════════════════ */
+.band{width:100%;border-bottom:1px solid var(--border);position:relative;overflow:hidden;flex-shrink:0}
+.band-inner{max-width:1160px;margin:0 auto;padding:36px 18px}
+
+/* Hero band */
+.hero{background:
+  radial-gradient(60% 80% at 50% 0%, rgba(91,158,255,.18), transparent 70%),
+  linear-gradient(180deg, #0a1428 0%, #07101f 100%)}
+.hero-inner{padding:46px 18px 38px;text-align:center}
+.hero-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;
+  background:rgba(91,158,255,.10);border:1px solid rgba(91,158,255,.30);
+  border-radius:99px;font-size:11px;color:var(--accent);font-weight:600;
+  margin-bottom:16px;letter-spacing:.3px}
+.hero-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--good);
+  box-shadow:0 0 0 0 rgba(74,222,128,.6);animation:dot-pulse 2s infinite}
+@keyframes dot-pulse{0%,100%{box-shadow:0 0 0 0 rgba(74,222,128,.6)}50%{box-shadow:0 0 0 6px rgba(74,222,128,0)}}
+.hero-title{font-size:clamp(26px,4.4vw,40px);font-weight:800;line-height:1.15;
+  letter-spacing:-.5px;margin-bottom:12px;
+  background:linear-gradient(135deg,#fff 0%,#a5c8ff 50%,#5b9eff 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.hero-sub{font-size:clamp(13px,1.6vw,15px);color:var(--fg2);max-width:720px;
+  margin:0 auto 28px;line-height:1.65}
+.hero-cta{display:inline-flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.cta-btn{padding:10px 20px;border-radius:var(--rs);font-size:13px;font-weight:700;
+  text-decoration:none;display:inline-flex;align-items:center;gap:6px;
+  transition:transform .15s, box-shadow .15s}
+.cta-primary{background:linear-gradient(135deg,#3d85ff,#5b9eff);color:#fff;
+  box-shadow:0 4px 18px rgba(91,158,255,.35)}
+.cta-primary:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(91,158,255,.45)}
+.cta-secondary{background:transparent;color:var(--fg2);border:1px solid var(--border2)}
+.cta-secondary:hover{color:var(--fg);background:#1a2540}
+
+/* USP grid */
+.usp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:30px}
+@media(max-width:840px){.usp-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:480px){.usp-grid{grid-template-columns:1fr}}
+.usp-card{padding:16px 14px;background:rgba(17,27,48,.7);border:1px solid var(--border);
+  border-radius:var(--rs);transition:all .2s;position:relative;overflow:hidden}
+.usp-card:hover{border-color:var(--accent);transform:translateY(-2px);
+  box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.usp-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,var(--accent),var(--scan));transform:scaleX(0);
+  transform-origin:left;transition:transform .3s}
+.usp-card:hover::before{transform:scaleX(1)}
+.usp-icon{font-size:24px;margin-bottom:8px;line-height:1}
+.usp-title{font-size:13px;font-weight:700;color:var(--fg);margin-bottom:5px}
+.usp-desc{font-size:11px;color:var(--fg3);line-height:1.55}
+.usp-card.priv{border-color:rgba(74,222,128,.4)}
+.usp-card.priv .usp-icon{color:var(--good)}
+.usp-card.acc{border-color:rgba(91,158,255,.4)}
+.usp-card.acc .usp-icon{color:var(--accent)}
+.usp-card.mtl{border-color:rgba(168,85,247,.4)}
+.usp-card.mtl .usp-icon{color:#c084fc}
+.usp-card.rule{border-color:rgba(251,191,36,.4)}
+.usp-card.rule .usp-icon{color:var(--warn)}
+
+/* Workflow band */
+.workflow{background:linear-gradient(180deg,#07101f 0%,#0a1428 100%)}
+.wf-title{text-align:center;font-size:13px;color:var(--fg2);
+  text-transform:uppercase;letter-spacing:2px;margin-bottom:24px;font-weight:600}
+.wf-row{display:grid;grid-template-columns:repeat(5,1fr) ;gap:6px;align-items:stretch}
+@media(max-width:840px){.wf-row{grid-template-columns:1fr;gap:8px}}
+.wf-step{padding:14px 12px;background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--rs);position:relative;text-align:center;transition:all .2s}
+.wf-step:hover{border-color:var(--accent);transform:translateY(-2px)}
+.wf-num{position:absolute;top:-10px;left:50%;transform:translateX(-50%);
+  width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;
+  font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;
+  border:3px solid var(--bg)}
+.wf-icon{font-size:22px;margin:8px 0 6px;line-height:1}
+.wf-name{font-size:12px;font-weight:700;color:var(--fg);margin-bottom:3px}
+.wf-meta{font-size:10px;color:var(--fg3);line-height:1.45}
+.wf-meta strong{color:var(--accent)}
+.wf-arrow{display:none}
+@media(min-width:841px){
+  .wf-row{grid-template-columns:1fr 12px 1fr 12px 1fr 12px 1fr 12px 1fr}
+  .wf-arrow{display:flex;align-items:center;justify-content:center;
+    font-size:18px;color:var(--border2);opacity:.7}
+}
 .sv{font-size:18px;font-weight:700;color:var(--good)}
 .sk{font-size:9px;color:var(--fg2);margin-top:2px}
 .m-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
@@ -230,6 +353,59 @@ input[type=file]{display:none}
 </head>
 <body>
 
+<!-- Browser compatibility gate — must run before anything else -->
+<script>
+(function(){
+  function block(html){
+    document.body.innerHTML =
+      '<div style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Arial,sans-serif;'+
+      'background:#07101f;color:#f0f5ff;min-height:100vh;display:flex;align-items:center;'+
+      'justify-content:center;padding:24px;text-align:center;line-height:1.7">'+html+'</div>';
+  }
+  // ① WebAssembly missing — very old browsers
+  if (typeof WebAssembly === 'undefined' || typeof WebAssembly.validate !== 'function') {
+    block(
+      '<div style="max-width:460px">'+
+      '<div style="font-size:48px;margin-bottom:12px">🦴</div>'+
+      '<div style="font-size:16px;font-weight:700;margin-bottom:16px">Bone Fracture Detector</div>'+
+      '<div style="font-size:13px;color:#b8c5dc;line-height:1.8">'+
+      '<p style="margin:6px 0">⚠️ 此浏览器不支持 WebAssembly,无法运行本地 AI 推理。</p>'+
+      '<p style="margin:6px 0">⚠️ This browser does not support WebAssembly.</p>'+
+      '<p style="margin:6px 0">⚠️ 이 브라우저는 WebAssembly를 지원하지 않습니다.</p>'+
+      '<p style="margin:18px 0 6px;color:#f0f5ff;font-weight:600">推荐 / Recommended / 권장:</p>'+
+      '<p style="margin:4px 0">Chrome 91+ · Edge 91+ · Firefox 89+ · Safari 16.4+</p>'+
+      '</div></div>'
+    );
+    return;
+  }
+  // ② WASM SIMD missing (iOS Safari < 16.4, old Android). ORT 1.20 requires SIMD.
+  // SIMD detection bytecode from github.com/GoogleChromeLabs/wasm-feature-detect (i8x16.splat module)
+  try {
+    var simdOk = WebAssembly.validate(new Uint8Array([
+      0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,
+      3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11
+    ]));
+    if (!simdOk) {
+      block(
+        '<div style="max-width:480px">'+
+        '<div style="font-size:48px;margin-bottom:12px">🦴</div>'+
+        '<div style="font-size:16px;font-weight:700;margin-bottom:16px">Bone Fracture Detector</div>'+
+        '<div style="font-size:13px;color:#b8c5dc;line-height:1.8">'+
+        '<p style="margin:6px 0;color:#fbbf24">⚠️ 您的浏览器版本较旧,缺少 WebAssembly SIMD 支持,无法运行本应用。</p>'+
+        '<p style="margin:6px 0;color:#fbbf24">⚠️ Your browser is too old (no WebAssembly SIMD).</p>'+
+        '<p style="margin:6px 0;color:#fbbf24">⚠️ 브라우저가 WebAssembly SIMD를 지원하지 않습니다.</p>'+
+        '<p style="margin:18px 0 4px;color:#f0f5ff;font-weight:600">最低浏览器要求 / Minimum:</p>'+
+        '<p style="margin:2px 0">📱 iOS Safari <strong style="color:#5b9eff">16.4+</strong>(설정 → 일반 → 소프트웨어 업데이트)</p>'+
+        '<p style="margin:2px 0">📱 Android Chrome <strong style="color:#5b9eff">91+</strong></p>'+
+        '<p style="margin:2px 0">💻 Desktop Chrome / Edge / Firefox <strong style="color:#5b9eff">91+</strong></p>'+
+        '<p style="margin:18px 0 6px;color:#8a9ab5;font-size:11px">建议换设备或升级系统后重试 / Try another device or update your OS</p>'+
+        '</div></div>'
+      );
+    }
+  } catch(e){/* if validate itself throws, let ORT report the real error */}
+})();
+</script>
+
 <!-- NAV -->
 <nav>
   <a class="nav-logo" href="#">
@@ -243,13 +419,109 @@ input[type=file]{display:none}
       <button class="lang-btn" onclick="setLang('en')">EN</button>
       <button class="lang-btn" onclick="setLang('zh')">中</button>
     </div>
+    <a class="nav-lnk" href="./details.html" data-i18n="details">详情</a>
     <button class="nav-lnk" onclick="openModal('modalAbout')" data-i18n="aboutModel">About</button>
     <button class="nav-lnk" onclick="openModal('modalDisc')" data-i18n="disclaimer">Disclaimer</button>
   </div>
 </nav>
 
+<!-- ════════════════════════════════════════════════════
+     HERO BAND — title + USPs + CTA
+     ════════════════════════════════════════════════════ -->
+<section class="band hero">
+  <div class="hero-inner">
+    <div class="hero-badge">
+      <span class="dot"></span>
+      <span data-i18n="heroLive">Live · MultiTask v1 · 100% on-device</span>
+    </div>
+    <h1 class="hero-title" data-i18n="heroTitle">
+      可解释的骨折辅助诊断系统
+    </h1>
+    <p class="hero-sub" data-i18n="heroSub">
+      检测 + 多任务分类 + 临床专家规则。所有计算在你的浏览器中完成,医学影像永不离开设备。
+    </p>
+    <div class="hero-cta">
+      <a href="#runHere" class="cta-btn cta-primary">
+        🩻 <span data-i18n="heroCta">开始检测</span>
+      </a>
+      <a href="./details.html" class="cta-btn cta-secondary">
+        📖 <span data-i18n="heroSecCta">技术详情</span>
+      </a>
+    </div>
+
+    <!-- USP cards -->
+    <div class="usp-grid">
+      <div class="usp-card priv">
+        <div class="usp-icon">🔒</div>
+        <div class="usp-title" data-i18n="usp1Title">100% 本地推理</div>
+        <div class="usp-desc" data-i18n="usp1Desc">医学影像永不上传服务器。所有 AI 计算在你的浏览器中完成 — ONNX Runtime Web,零隐私风险。</div>
+      </div>
+      <div class="usp-card acc">
+        <div class="usp-icon">🎯</div>
+        <div class="usp-title" data-i18n="usp2Title">检测 mAP50 = 0.82</div>
+        <div class="usp-desc" data-i18n="usp2Desc">YOLOv8m 在 27k 多源 X 光统一数据集上训练,有可复现 manifest,完整审计记录,真实数字。</div>
+      </div>
+      <div class="usp-card mtl">
+        <div class="usp-icon">🧠</div>
+        <div class="usp-title" data-i18n="usp3Title">多任务上下文感知</div>
+        <div class="usp-desc" data-i18n="usp3Desc">同时输出 <strong>位置 · 方向 · 形态学</strong>;Siamese 双输入 + EdgeGuidedAttention 拓扑门控。</div>
+      </div>
+      <div class="usp-card rule">
+        <div class="usp-icon">⚕</div>
+        <div class="usp-title" data-i18n="usp4Title">临床专家规则</div>
+        <div class="usp-desc" data-i18n="usp4Desc">3 条医学逻辑规则 + 4 个状态码 + 智能边界警告 — 不是吐生概率,是可读的诊断建议。</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════
+     WORKFLOW BAND — 5-step pipeline visualization
+     ════════════════════════════════════════════════════ -->
+<section class="band workflow">
+  <div class="band-inner">
+    <div class="wf-title" data-i18n="wfTitle">⚙ Detection Pipeline · 五步级联推理</div>
+    <div class="wf-row">
+      <div class="wf-step">
+        <div class="wf-num">1</div>
+        <div class="wf-icon">📤</div>
+        <div class="wf-name" data-i18n="wf1Name">上传</div>
+        <div class="wf-meta" data-i18n="wf1Meta">JPG · PNG · WebP · <strong>DICOM</strong></div>
+      </div>
+      <div class="wf-arrow">›</div>
+      <div class="wf-step">
+        <div class="wf-num">2</div>
+        <div class="wf-icon">🔍</div>
+        <div class="wf-name" data-i18n="wf2Name">检测</div>
+        <div class="wf-meta" data-i18n="wf2Meta">YOLOv8m · <strong>mAP50 0.82</strong></div>
+      </div>
+      <div class="wf-arrow">›</div>
+      <div class="wf-step">
+        <div class="wf-num">3</div>
+        <div class="wf-icon">🦴</div>
+        <div class="wf-name" data-i18n="wf3Name">多任务分类</div>
+        <div class="wf-meta" data-i18n="wf3Meta">每框 · <strong>位置·方向·形态学</strong></div>
+      </div>
+      <div class="wf-arrow">›</div>
+      <div class="wf-step">
+        <div class="wf-num">4</div>
+        <div class="wf-icon">⚕</div>
+        <div class="wf-name" data-i18n="wf4Name">专家规则</div>
+        <div class="wf-meta" data-i18n="wf4Meta">3 规则 · <strong>4 状态码</strong></div>
+      </div>
+      <div class="wf-arrow">›</div>
+      <div class="wf-step">
+        <div class="wf-num">5</div>
+        <div class="wf-icon">📋</div>
+        <div class="wf-name" data-i18n="wf5Name">报告</div>
+        <div class="wf-meta" data-i18n="wf5Meta">PDF · 热力图 · JSON</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- MAIN -->
-<div class="wrap">
+<main class="wrap" id="runHere">
 
   <!-- LEFT -->
   <div class="card">
@@ -264,29 +536,36 @@ input[type=file]{display:none}
         <div class="model-opt active" id="optLite" onclick="selectModel('lite')">
           <div class="mo-sel-dot"></div>
           <div class="mo-name">YOLOv8n <span class="mo-badge mo-lite" data-i18n="lite">Lite</span></div>
-          <div class="mo-stats">11.7 MB · mAP50 75.8% · <span data-i18n="fast">Fast</span></div>
+          <div class="mo-stats">11.7 MB · <span data-i18n="fast">Fast</span> · legacy fallback</div>
         </div>
         <div class="model-opt disabled" id="optFull" title="Loading ORT first…">
           <div class="mo-sel-dot"></div>
           <div class="mo-name">YOLOv8m <span class="mo-badge mo-full" data-i18n="full">Full</span></div>
-          <div class="mo-stats">98.8 MB · mAP50 90.4% · <span data-i18n="accurate">Accurate</span></div>
+          <div class="mo-stats">99 MB · mAP50 0.82 · YOLOv8m · <span data-i18n="accurate">Accurate</span></div>
         </div>
+      </div>
+
+      <!-- First-load info -->
+      <div class="load-info">
+        <span class="ico">ℹ️</span>
+        <span data-i18n="loadInfo">First load: <strong>5-15 s</strong> (~22 MB download). Subsequent visits: <strong>&lt; 1 s</strong> (cached on device).</span>
       </div>
 
       <!-- Lightbox -->
       <label for="fileInput" class="lbox" id="drop">
         <div class="lbox-ph" id="lboxPh">
+          <div class="t0" data-i18n="step1">STEP 1 · CLICK TO START</div>
           <span class="ico">🩻</span>
           <div class="t1" data-i18n="tapSel">Tap to select X-ray image</div>
-          <div class="t2 " style="color:var(--fg3)" data-i18n="fmts">JPG · PNG · WebP · BMP</div>
+          <div class="t2" data-i18n="fmts">JPG · PNG · WebP · BMP</div>
         </div>
         <div class="cw" id="cw">
-          <canvas id="srcCanvas"></canvas>
-          <canvas id="detCanvas"></canvas>
+          <canvas id="srcCanvas" aria-label="X-ray image preview" role="img"></canvas>
+          <canvas id="detCanvas" aria-label="Fracture detection overlay" aria-hidden="true"></canvas>
           <div class="scanline" id="scanline"></div>
         </div>
       </label>
-      <input type="file" id="fileInput" accept="image/*"/>
+      <input type="file" id="fileInput" accept="image/*,.dcm,application/dicom"/>
 
       <!-- X-ray warning -->
       <div class="xray-warn" id="xrayWarn">
@@ -378,13 +657,14 @@ input[type=file]{display:none}
       <!-- Actions -->
       <div class="act-row">
         <button class="act-btn" id="btnPNG" onclick="APP.exportPNG()" disabled>📷 <span data-i18n="saveImg">Save</span></button>
-        <button class="act-btn" id="btnJSON" onclick="APP.exportJSON()" disabled>📄 <span data-i18n="expJSON">JSON</span></button>
+        <button class="act-btn" id="btnPDF" onclick="APP.exportPDF()" disabled>📋 <span data-i18n="expPDF">PDF Report</span></button>
+        <button class="act-btn" id="btnHeatmap" onclick="APP.showHeatmap()" disabled>🔥 <span data-i18n="heatmap">Heatmap</span></button>
         <button class="act-btn" id="btnClear" onclick="APP.clear()" disabled>🗑 <span data-i18n="clear">Clear</span></button>
       </div>
     </div>
   </div>
 
-</div><!-- /.wrap -->
+</main><!-- /.wrap -->
 
 <!-- COLLAPSIBLES -->
 <div class="col-wrap">
@@ -409,16 +689,19 @@ input[type=file]{display:none}
     </div>
     <div class="col-bd">
       <div class="stat-grid">
-        <div class="stat-box"><div class="sv">90.4%</div><div class="sk" data-i18n="mfull">mAP50 — Full (YOLOv8m, 98.8 MB)</div></div>
-        <div class="stat-box"><div class="sv">75.8%</div><div class="sk" data-i18n="mlite">mAP50 — Lite (YOLOv8n, 11.7 MB)</div></div>
-        <div class="stat-box"><div class="sv">1,129</div><div class="sk" data-i18n="imgs">X-ray imgs (903/112/114)</div></div>
-        <div class="stat-box"><div class="sv">Optuna</div><div class="sk" data-i18n="hpo">AutoML HPO · TPE + MedianPruner · ep72</div></div>
+        <div class="stat-box"><div class="sv">0.82</div><div class="sk" data-i18n="statDet">检测 mAP50 · YOLOv8m</div></div>
+        <div class="stat-box"><div class="sv">0.92</div><div class="sk" data-i18n="statLoc">MTL 位置 acc · Shaft/Joint</div></div>
+        <div class="stat-box"><div class="sv">0.86</div><div class="sk" data-i18n="statDir">MTL 方向 acc · 横/斜/纵</div></div>
+        <div class="stat-box"><div class="sv">27k</div><div class="sk" data-i18n="statImg">训练集 · 多源统一</div></div>
+        <div class="stat-box"><div class="sv">3</div><div class="sk" data-i18n="statHeads">任务头 · 位置+方向+形态学</div></div>
+        <div class="stat-box"><div class="sv">100%</div><div class="sk" data-i18n="statLocal">浏览器内推理 · 零上传</div></div>
       </div>
       <div class="m-chips">
-        <span class="m-chip">YOLOv8n-fracture</span>
-        <span class="m-chip">input: 640×640</span>
-        <span class="m-chip">class: fracture</span>
-        <span class="m-chip">runtime: onnxruntime-web (wasm)</span>
+        <span class="m-chip">det: YOLOv8n/m (640×640)</span>
+        <span class="m-chip">clf: MultiTask Net (EfficientNet-B3 siamese) · 3 heads · EdgeGuidedAttention</span>
+        <span class="m-chip">det mAP50 0.82 (v6 / 27k unified) · clf loc-acc 92% / dir-acc 86%</span>
+        <span class="m-chip">runtime: onnxruntime-web</span>
+        <span class="m-chip">+ DICOM (.dcm)</span>
         <span class="m-chip">GitHub: zvs808-code/bone-fracture-yolov8</span>
       </div>
     </div>
@@ -428,7 +711,8 @@ input[type=file]{display:none}
 <!-- FOOTER -->
 <div class="footer">
   <span data-i18n="footerTxt">⚠️ Educational &amp; research use only · Not a medical device · Do not use for clinical diagnosis</span>
-  &nbsp;·&nbsp; on-device ONNX Runtime Web · YOLOv8 Fracture Detector
+  &nbsp;·&nbsp; on-device ONNX Runtime Web · YOLOv8 Fracture Detector<br>
+  <span style="color:var(--fg)">© 2026 <strong>ZHANG HAO 장호</strong></span>
 </div>
 
 <!-- MODALS -->
@@ -436,9 +720,10 @@ input[type=file]{display:none}
   <div class="modal">
     <button class="mcl" onclick="closeM('modalAbout')">✕</button>
     <h3>📊 <span data-i18n="aboutModel">About Model</span></h3>
-    <p data-i18n="ab1">Uses <strong>YOLOv8n</strong> trained on 1,129 X-ray images with Optuna AutoML (72 trials, TPE + MedianPruner).</p>
-    <p data-i18n="ab2">Full (YOLOv8m): <strong>mAP50 90.4%</strong> | Lite (YOLOv8n): <strong>mAP50 75.8%</strong></p>
-    <p data-i18n="ab3">100% on-device inference via <strong>ONNX Runtime Web (WASM)</strong>. No data uploaded.</p>
+    <p data-i18n="ab1"><strong>Detection (YOLOv8m)</strong>: 多源统一数据集 27k 训练,可复现 manifest,完整审计记录。Box mAP50 <strong>0.82</strong> · 灵敏度 <strong>96%</strong> / 特异度 <strong>79%</strong>。</p>
+    <p data-i18n="abClf"><strong>Classification (MultiTask Net)</strong>: Siamese EfficientNet-B3 双输入 + 3 任务头(位置·方向·形态学) + EdgeGuidedAttention 拓扑门控 + Uncertainty-Weighted Loss。位置 acc <strong>92%</strong>,方向 acc <strong>86%</strong>。</p>
+    <p data-i18n="abExpert"><strong>Clinical Expert System</strong>: 3 条医学规则 + 4 状态码 + 三语临床文案。<em>不</em>是吐生概率,而是可读的诊断建议 + 风险警示。</p>
+    <p data-i18n="ab3">100% on-device inference via <strong>ONNX Runtime Web</strong> · DICOM (.dcm) 支持。任何医学影像都不会被上传。</p>
     <p style="font-size:10px;color:var(--fg3)">GitHub: <a href="https://github.com/zvs808-code/bone-fracture-yolov8" target="_blank" style="color:var(--accent)">zvs808-code/bone-fracture-yolov8</a></p>
   </div>
 </div>
@@ -455,8 +740,9 @@ input[type=file]{display:none}
 <!-- I18N -->
 <script>
 const I18N={
-  ko:{siteTitle:'골절 탐지기',loading:'로딩 중…',aboutModel:'모델 소개',disclaimer:'면책조항',
-    selectImg:'X-ray 이미지 선택',tapSel:'탭하여 X-ray 이미지 선택',fmts:'JPG·PNG·WebP·BMP',
+  ko:{siteTitle:'골절 탐지기',loading:'로딩 중…',details:'상세',aboutModel:'모델 소개',disclaimer:'면책조항',
+    selectImg:'X-ray 이미지 선택',tapSel:'X-ray 이미지를 선택하세요',fmts:'JPG·PNG·WebP·BMP·DICOM(.dcm)',step1:'STEP 1 · 클릭하여 시작',
+    loadInfo:'<strong>검출</strong> 모델 최초 <strong>5-15초</strong> (약 22 MB) · <strong>다중작업 분류기</strong> 백그라운드 <strong>~50 MB</strong> (MultiTask Net) · 이후 방문 <strong>1초 이내</strong> (캐시됨, Wi-Fi 권장).',
     lite:'라이트',full:'풀',fast:'빠름',accurate:'정확',
     localProc:'온디바이스 · 업로드 없음',tryEx:'예시:',
     ex0:'손목 (골절)',ex1:'전완부 (골절)',ex2:'팔꿈치 (골절)',
@@ -464,22 +750,24 @@ const I18N={
     pipeline:'탐지 파이프라인',
     psUp:'업로드',psScr:'골절 선별',psClf:'유형 분류',
     stgScr:'1단계 · 골절 선별',scrSub:'골절이 있나요?',
-    stgClf:'2단계 · 골절 분류',clfSub:'유형 및 위치',
+    stgClf:'2단계 · 다중작업 분류 (MTL)',clfSub:'위치 · 방향 · 형태학',
     waiting:'탐지 대기 중…',waitScr:'선별 완료 후 진행됩니다.',
     howTitle:'작동 방식',modelInfo:'모델 정보',
     h1t:'업로드',h1d:'기기에서 X-ray 선택. 로컬 처리, 서버 전송 없음.',
     h2t:'골절 선별',h2d:'YOLOv8n이 골절 부위를 탐지. 비X-ray 이미지는 경고 표시.',
-    h3t:'유형 분류',h3d:'박스 형태와 신뢰도를 기반으로 골절 유형 분류.',
+    h3t:'다중작업 분류',h3d:'MultiTask Net: 위치(Shaft/Joint) + 방향(횡/사/종) + 형태학(전위/분쇄) 3 태스크 헤드 + EdgeGuidedAttention 위상 게이팅. 위치 acc 92%, 방향 acc 86%.',
     h4t:'결과 출력',h4d:'주석 이미지 또는 JSON으로 내보내기 가능.',
     mfull:'mAP50 — 풀 모델 (YOLOv8m, 98.8MB)',mlite:'mAP50 — 라이트 모델 (YOLOv8n, 11.7MB)',
-    imgs:'X-ray 이미지 (train903/val112/test114)',hpo:'AutoML HPO · TPE+MedianPruner · ep72',
+    imgs:'X-ray 이미지 · 학습용 (정제된 단일 클래스 통합 데이터셋, 14,202장)',imgs2:'X-ray 이미지 · 평가용 (945장 holdout 테스트)',clfm:'macro-AUC · 계단식 10종 type-only',hpo:'검출 학습 · 100 epochs · 정제 데이터셋',
     footerTxt:'⚠️ 교육·연구 목적 전용 · 의료기기 아님 · 임상 진단에 사용 금지',
-    saveImg:'저장',expJSON:'JSON',clear:'초기화',
+    saveImg:'저장',expPDF:'PDF 보고서',heatmap:'히트맵',clear:'초기화',
+    heatmapComputing:'히트맵 계산 중 (~5초)…',heatmapRemove:'히트맵 제거',heatmapNoBaseDet:'고신뢰도 검출이 없어 히트맵을 만들 수 없습니다.',
     confLeg:'신뢰도 안내',high:'높음 ≥70%',mid:'중간 40–69%',low:'낮음 <40%',
-    notXray:'⚠️ X-ray 이미지가 아닐 수 있습니다. 결과가 부정확할 수 있습니다.',
-    ab1:'1,129장 X-ray로 학습된 <strong>YOLOv8n</strong> 골절 탐지 모델 (Optuna 72 trial).',
-    ab2:'풀모델(YOLOv8m): <strong>mAP50 90.4%</strong> | 라이트(YOLOv8n): <strong>mAP50 75.8%</strong>',
-    ab3:'<strong>ONNX Runtime Web(WASM)</strong>으로 100% 온디바이스 추론. 데이터 전송 없음.',
+    notXray:'⚠️ 기본 영상 검사: X-ray가 아닐 수 있습니다. 결과 부정확 가능.',
+    ab1:'<strong>검출 (YOLOv8m)</strong>: 정제된 다중 출처 통합 데이터셋 14,202장 학습 (재현 가능 manifest 포함, GRAZPEDWRI+HBFMID+FracAtlas 등 8개 출처 검증).',
+    ab2:'검출 v6 box-level mAP50 <strong>0.82</strong> (Phase 6, 27k 다중 출처 통합 데이터셋). 영상의학 전문의 라벨링 후 image-level AUC + 다기관 외부 검증을 진행할 예정.',
+    abClf:'<strong>분류 (EfficientNet-B3 계단식)</strong>: 10종 골절 유형 (Normal은 검출이 처리), 8,235장 학습 · macro-AUC <strong>0.984</strong> · TTA · ECE 0.045.',
+    ab3:'<strong>ONNX Runtime Web</strong> 100% 온디바이스 추론 · DICOM(.dcm) 지원 · 데이터 전송 없음.',
     dis1:'<strong>교육 및 연구 시연 목적</strong>으로만 제공됩니다. <strong>인증 의료기기가 아닙니다.</strong>',
     dis2:'결과에 오류가 있을 수 있습니다. 방사선 전문의 상담 필수.',
     dis3:'저자는 이 앱 출력에 기반한 결정에 대해 책임지지 않습니다.',
@@ -487,14 +775,52 @@ const I18N={
     ftTransverse:'횡형 골절',ftOblique:'사형 골절',ftLongitudinal:'종형 골절',
     ftComminuted:'분쇄 골절',ftHairline:'실금 골절',ftSuspected:'골절 의심',
     // verdicts
-    vrdNormal:'정상 — 골절 미검출',vrdFracture:'골절 검출됨',vrdUncertain:'불확실 — 추가 검사 필요',
+    vrdNormal:'현 임계값에서 의심 영역 미검출',vrdFracture:'골절 의심 영역 검출됨',vrdUncertain:'불확실 — 추가 검사 필요',
     scrNormal:'신뢰도 임계값 내 골절이 탐지되지 않았습니다.',
     scrFracture:'골절 의심 부위가 검출되었습니다. 유형 분류를 진행합니다.',
-    clfIntro:'검출된 골절 유형:',
+    clfIntro:'골절 유형 분류 (전체 영상):',
+    clfLoading:'다중작업 분류기 로딩 중 (MTL, 50MB)…',clfUnavail:'분류 모델을 사용할 수 없습니다.',
+    clfWhole:'전체 영상 분류 결과',clfTop3:'상위 3개 후보',clfAcc:'테스트 정확도 91.63%',
+    clfOOD:'입력이 표준 X-ray가 아닐 수 있어 <strong>분류 결과를 신뢰할 수 없습니다</strong>. 참고하지 마세요.',
+    clfLowConf:'모델 신뢰도가 낮거나 후보가 근접합니다 — <strong>방사선 전문의 확인 필요</strong>.',
+    clfNoDet:'검출 단계에서 골절 위치를 찾지 못했습니다. 아래 분류는 <strong>검출과 독립적인 전체 영상 분류</strong>이므로 신중히 참고하세요.',
+    clfNoFracture:'검출된 골절 없음',
+    clfCascadeNote:'검출 모델이 골절을 찾지 못해 분류 단계는 건너뜁니다 (계단식 워크플로우).',
+    clfPerBoxProg:'각 검출 영역 분류 중 (총 {n})',
+    clfPerBoxHeader:'영역별 골절 유형 ({n} 개 영역 — 각각 독립 분류)',
+    clfPerBoxFailed:'영역 분류 실패',
+    clfDetConf:'검출 신뢰도',
     elapsed:'경과시간',maxConf:'최고신뢰도',
+    scanning:'분석 중…',
+    region:'곳',regions:'곳',
+    detection:'건 탐지',detections:'건 탐지',
+    exLoadErr:'예시 이미지 로드 실패',
+    highThrHint:'임계값이 너무 높습니다 (>70%). 실제 골절이 필터링될 수 있습니다. 0.25~0.50으로 낮춰보세요.',
+    // Hero + USPs + Workflow (v13-marketing)
+    heroLive:'실시간 · MultiTask v1 · 100% 온디바이스',
+    heroTitle:'설명 가능한 골절 보조 진단 시스템',
+    heroSub:'검출 + 다중작업 분류 + 임상 전문가 규칙. 모든 계산이 브라우저에서 수행되며, 의료 영상은 기기를 떠나지 않습니다.',
+    heroCta:'검사 시작',heroSecCta:'기술 상세',
+    usp1Title:'100% 로컬 추론',usp1Desc:'의료 영상은 절대 서버로 전송되지 않습니다. 모든 AI 연산이 브라우저에서 실행 — ONNX Runtime Web, 프라이버시 위험 제로.',
+    usp2Title:'검출 mAP50 = 0.82',usp2Desc:'YOLOv8m를 27k 다중 출처 통합 X-ray 데이터셋에서 학습, 재현 가능 manifest, 완전한 감사 기록, 진실된 수치.',
+    usp3Title:'다중작업 컨텍스트 인식',usp3Desc:'동시에 출력 <strong>위치 · 방향 · 형태학</strong>; Siamese 듀얼 입력 + EdgeGuidedAttention 위상 게이팅.',
+    usp4Title:'임상 전문가 규칙',usp4Desc:'3가지 의학 논리 규칙 + 4가지 상태 코드 + 지능형 경계 경고 — 생확률이 아닌 읽기 쉬운 진단 제안.',
+    wfTitle:'⚙ 검출 파이프라인 · 5단계 케스케이드 추론',
+    wf1Name:'업로드',wf1Meta:'JPG · PNG · WebP · <strong>DICOM</strong>',
+    wf2Name:'검출',wf2Meta:'YOLOv8m · <strong>mAP50 0.82</strong>',
+    wf3Name:'다중작업 분류',wf3Meta:'각 영역 · <strong>위치·방향·형태학</strong>',
+    wf4Name:'전문가 규칙',wf4Meta:'3 규칙 · <strong>4 상태 코드</strong>',
+    wf5Name:'리포트',wf5Meta:'PDF · 히트맵 · JSON',
+    statDet:'검출 mAP50 · YOLOv8m',statLoc:'MTL 위치 acc · Shaft/Joint',
+    statDir:'MTL 방향 acc · 횡/사/종',statImg:'학습셋 · 다중 출처 통합',
+    statHeads:'태스크 헤드 · 위치+방향+형태학',statLocal:'브라우저 추론 · 업로드 없음',
+    abExpert:'<strong>임상 전문가 시스템</strong>: 3 가지 의학 규칙 + 4 상태 코드 + 3개국어 임상 문구. 생확률이 아닌 읽기 쉬운 진단 제안 + 위험 경고.',
+    ab1:'<strong>검출 (YOLOv8m)</strong>: 다중 출처 통합 27k 데이터셋 학습, 재현 가능 manifest, 완전한 감사 기록. Box mAP50 <strong>0.82</strong> · 민감도 <strong>96%</strong> / 특이도 <strong>79%</strong>.',
+    abClf:'<strong>분류 (MultiTask Net)</strong>: Siamese EfficientNet-B3 듀얼 입력 + 3 태스크 헤드 (위치·방향·형태학) + EdgeGuidedAttention 위상 게이팅 + Uncertainty-Weighted Loss. 위치 acc <strong>92%</strong>, 방향 acc <strong>86%</strong>.',
   },
-  en:{siteTitle:'Bone Fracture Detector',loading:'Loading…',aboutModel:'About Model',disclaimer:'Disclaimer',
-    selectImg:'Select X-ray',tapSel:'Tap to select X-ray image',fmts:'JPG·PNG·WebP·BMP',
+  en:{siteTitle:'Bone Fracture Detector',loading:'Loading…',details:'Details',aboutModel:'About Model',disclaimer:'Disclaimer',
+    selectImg:'Select X-ray',tapSel:'Click here to select X-ray image',fmts:'JPG·PNG·WebP·BMP·DICOM(.dcm)',step1:'STEP 1 · CLICK TO START',
+    loadInfo:'<strong>Detector</strong> first load <strong>5-15 s</strong> (~22 MB) · <strong>Multi-Task Classifier</strong> loads in background <strong>~50 MB</strong> (MultiTask Net) · Subsequent visits <strong>&lt; 1 s</strong> (cached, Wi-Fi recommended).',
     lite:'Lite',full:'Full',fast:'Fast',accurate:'Accurate',
     localProc:'On-device · No upload',tryEx:'Try:',
     ex0:'Wrist (fracture)',ex1:'Forearm (fracture)',ex2:'Elbow (fracture)',
@@ -502,35 +828,75 @@ const I18N={
     pipeline:'Detection Pipeline',
     psUp:'Upload',psScr:'Screen',psClf:'Classify',
     stgScr:'Stage 1 · Fracture Screening',scrSub:'Is there a fracture?',
-    stgClf:'Stage 2 · Fracture Classification',clfSub:'Type & location',
+    stgClf:'Stage 2 · Multi-Task Classification (MTL)',clfSub:'Location · Direction · Morphology',
     waiting:'Waiting for detection…',waitScr:'Complete screening first.',
     howTitle:'How It Works',modelInfo:'Model Info',
     h1t:'Upload',h1d:'Select X-ray from device. Local only — never sent to server.',
     h2t:'Screening',h2d:'YOLOv8n detects fracture regions. Non-X-ray images are flagged.',
-    h3t:'Classification',h3d:'Detected regions classified by fracture type based on shape & confidence.',
+    h3t:'Multi-Task Classification',h3d:'MultiTask Net: Location (Shaft/Joint) + Direction (Trans/Obli/Long) + Morphology (Displaced/Comminuted) — 3 task heads + EdgeGuidedAttention topology gating. Location acc 92%, Direction acc 86%.',
     h4t:'Report',h4d:'Export as annotated image or JSON for further analysis.',
     mfull:'mAP50 — Full Model (YOLOv8m, 98.8MB)',mlite:'mAP50 — Lite Model (YOLOv8n, 11.7MB)',
-    imgs:'X-ray Images (train903/val112/test114)',hpo:'AutoML HPO · TPE+MedianPruner · ep72',
+    imgs:'X-ray Images · Training (clean unified single-class set, 14,202)',imgs2:'X-ray Images · Held-out test (945 honest evaluation)',clfm:'macro-AUC · cascade 10-cls type-only',hpo:'Detection training · 100 epochs · clean dataset',
     footerTxt:'⚠️ Educational & research use only · Not a medical device · Do not use for clinical diagnosis',
-    saveImg:'Save',expJSON:'JSON',clear:'Clear',
+    saveImg:'Save',expPDF:'PDF Report',heatmap:'Heatmap',clear:'Clear',
+    heatmapComputing:'Computing heatmap (~5s)…',heatmapRemove:'Remove heatmap',heatmapNoBaseDet:'No high-confidence detection — heatmap cannot be generated.',
     confLeg:'Confidence Guide',high:'High ≥70%',mid:'Mid 40–69%',low:'Low <40%',
-    notXray:'This image may not be an X-ray. Results may be inaccurate.',
-    ab1:'Uses <strong>YOLOv8n</strong> trained on 1,129 X-ray images with Optuna AutoML (72 trials, TPE + MedianPruner).',
-    ab2:'Full (YOLOv8m): <strong>mAP50 90.4%</strong> | Lite (YOLOv8n): <strong>mAP50 75.8%</strong>',
-    ab3:'100% on-device inference via <strong>ONNX Runtime Web (WASM)</strong>. No data uploaded.',
+    notXray:'Basic image check: this may not be an X-ray. Results may be inaccurate.',
+    ab1:'<strong>Detection (YOLOv8m)</strong>: clean multi-source unified dataset, 14,202 X-rays with reproducible manifest (8 verified sources incl. GRAZPEDWRI, HBFMID, FracAtlas).',
+    ab2:'Detection v6 box-level mAP50 <strong>0.82</strong> (Phase 6, 27k multi-source unified dataset). Image-level AUC + multi-institutional external validation pending radiologist labeling.',
+    abClf:'<strong>Classification (EfficientNet-B3 cascade)</strong>: 10 fracture types (Normal handled by detector), 8,235 training images · macro-AUC <strong>0.984</strong> · TTA · ECE 0.045.',
+    ab3:'100% on-device inference via <strong>ONNX Runtime Web</strong> · DICOM (.dcm) support · No data uploaded.',
     dis1:'For <strong>educational and research demonstration</strong> only. <strong>Not a certified medical device.</strong>',
     dis2:'Results may contain errors. Always consult a qualified radiologist.',
     dis3:'Authors accept no liability for decisions made based on outputs from this application.',
     ftTransverse:'Transverse Fracture',ftOblique:'Oblique Fracture',ftLongitudinal:'Longitudinal Fracture',
     ftComminuted:'Comminuted Fracture',ftHairline:'Hairline Fracture',ftSuspected:'Suspected Fracture',
-    vrdNormal:'Normal — No fracture detected',vrdFracture:'Fracture Detected',vrdUncertain:'Uncertain — Further exam needed',
+    vrdNormal:'No suspicious region above threshold',vrdFracture:'Suspicious region(s) detected',vrdUncertain:'Uncertain — Further exam needed',
     scrNormal:'No fracture detected above confidence threshold.',
     scrFracture:'Suspected fracture region(s) detected. Proceeding to classification.',
-    clfIntro:'Detected fracture type(s):',
+    clfIntro:'Fracture type classification (whole image):',
+    clfLoading:'Loading multi-task classifier (MTL, 50MB)…',clfUnavail:'Classifier unavailable.',
+    clfWhole:'Whole-image classification',clfTop3:'Top-3 candidates',clfAcc:'Test accuracy 91.63%',
+    clfOOD:'Input may not be a standard X-ray — <strong>classification is unreliable</strong>. Do not rely on it.',
+    clfLowConf:'Low model confidence or close candidates — <strong>radiologist review needed</strong>.',
+    clfNoDet:'Detection localized no fracture region. The classification below is a <strong>whole-image label, independent of detection</strong> — interpret with caution.',
+    clfNoFracture:'No fracture detected',
+    clfCascadeNote:'The detector found no fracture, so the classifier was skipped (cascade workflow).',
+    clfPerBoxProg:'Classifying each detected region (total {n})',
+    clfPerBoxHeader:'Per-region fracture type ({n} regions — classified independently)',
+    clfPerBoxFailed:'Per-region classification failed',
+    clfDetConf:'Det conf',
     elapsed:'Elapsed',maxConf:'Max Conf.',
+    scanning:'Analyzing…',
+    region:'region',regions:'regions',
+    detection:'detection',detections:'detections',
+    exLoadErr:'Failed to load example image',
+    highThrHint:'Confidence threshold is very high (>70%). Real fractures may be filtered out. Try lowering to 0.25–0.50.',
+    // Hero + USPs + Workflow (v13-marketing)
+    heroLive:'Live · MultiTask v1 · 100% on-device',
+    heroTitle:'Explainable Fracture-Assistance Diagnostic System',
+    heroSub:'Detection + Multi-Task Classification + Clinical Expert Rules. All computation runs in your browser — medical images never leave your device.',
+    heroCta:'Start detection',heroSecCta:'Technical details',
+    usp1Title:'100% Local Inference',usp1Desc:'Medical images are never uploaded. All AI runs in your browser via ONNX Runtime Web — zero privacy risk.',
+    usp2Title:'Detection mAP50 = 0.82',usp2Desc:'YOLOv8m trained on a 27k multi-source unified X-ray dataset with reproducible manifest and full audit trail — real, honest numbers.',
+    usp3Title:'Multi-Task Context-Aware',usp3Desc:'Outputs <strong>Location · Direction · Morphology</strong> simultaneously; Siamese dual-input + EdgeGuidedAttention topology gating.',
+    usp4Title:'Clinical Expert Rules',usp4Desc:'3 medical-logic rules + 4 status codes + smart boundary warning — not raw probabilities, but readable clinical suggestions.',
+    wfTitle:'⚙ Detection Pipeline · 5-step cascade inference',
+    wf1Name:'Upload',wf1Meta:'JPG · PNG · WebP · <strong>DICOM</strong>',
+    wf2Name:'Detect',wf2Meta:'YOLOv8m · <strong>mAP50 0.82</strong>',
+    wf3Name:'Multi-Task',wf3Meta:'Per-box · <strong>Loc · Dir · Morph</strong>',
+    wf4Name:'Expert Rules',wf4Meta:'3 rules · <strong>4 status codes</strong>',
+    wf5Name:'Report',wf5Meta:'PDF · Heatmap · JSON',
+    statDet:'Det mAP50 · YOLOv8m',statLoc:'MTL Location acc · Shaft/Joint',
+    statDir:'MTL Direction acc · Trans/Obli/Long',statImg:'Training set · Multi-source unified',
+    statHeads:'Task heads · Loc + Dir + Morph',statLocal:'In-browser inference · No upload',
+    abExpert:'<strong>Clinical Expert System</strong>: 3 medical rules + 4 status codes + tri-lingual clinical prompts. <em>Not</em> raw probabilities — readable diagnosis suggestions with risk warnings.',
+    ab1:'<strong>Detection (YOLOv8m)</strong>: 27k multi-source unified dataset with reproducible manifest and full audit. Box mAP50 <strong>0.82</strong> · sensitivity <strong>96%</strong> / specificity <strong>79%</strong>.',
+    abClf:'<strong>Classification (MultiTask Net)</strong>: Siamese EfficientNet-B3 dual-input + 3 task heads (Location · Direction · Morphology) + EdgeGuidedAttention topology gating + Uncertainty-Weighted Loss. Location acc <strong>92%</strong>, Direction acc <strong>86%</strong>.',
   },
-  zh:{siteTitle:'骨折检测器',loading:'加载中…',aboutModel:'关于模型',disclaimer:'免责声明',
-    selectImg:'选择X光图像',tapSel:'点击选择X光图像',fmts:'JPG·PNG·WebP·BMP',
+  zh:{siteTitle:'骨折检测器',loading:'加载中…',details:'详情',aboutModel:'关于模型',disclaimer:'免责声明',
+    selectImg:'选择X光图像',tapSel:'点这里选择X光图像',fmts:'JPG·PNG·WebP·BMP·DICOM(.dcm)',step1:'第 1 步 · 点击开始',
+    loadInfo:'<strong>检测</strong>模型首次 <strong>5-15 秒</strong>（约 22 MB） · <strong>多任务分类器</strong>后台再加载 <strong>~50 MB</strong>（MultiTask Net） · 之后访问 <strong>&lt; 1 秒</strong>（已缓存，建议 Wi-Fi）。',
     lite:'轻量',full:'完整',fast:'快速',accurate:'精确',
     localProc:'本地处理 · 不上传',tryEx:'示例：',
     ex0:'腕关节（骨折）',ex1:'前臂（骨折）',ex2:'肘部（骨折）',
@@ -538,32 +904,71 @@ const I18N={
     pipeline:'检测流程',
     psUp:'上传',psScr:'筛查',psClf:'分类',
     stgScr:'第1步 · 骨折筛查',scrSub:'是否存在骨折？',
-    stgClf:'第2步 · 骨折分类',clfSub:'类型与位置',
+    stgClf:'第2步 · 多任务分类(MTL)',clfSub:'位置 · 方向 · 形态学',
     waiting:'等待检测…',waitScr:'完成筛查后继续。',
     howTitle:'工作原理',modelInfo:'模型信息',
     h1t:'上传',h1d:'从设备选择X光图像，本地处理，不上传服务器。',
     h2t:'骨折筛查',h2d:'YOLOv8n检测骨折区域，非X光图像会给出警告。',
-    h3t:'骨折分类',h3d:'根据检测框形状和置信度对骨折类型进行分类。',
+    h3t:'多任务分类',h3d:'MultiTask Net:位置(Shaft/Joint)+ 方向(横/斜/纵)+ 形态学(移位/粉碎)三任务头 + EdgeGuidedAttention 拓扑门控。位置 acc 92%,方向 acc 86%。',
     h4t:'结果输出',h4d:'可导出为标注图像或JSON格式进行进一步分析。',
     mfull:'mAP50 — 完整模型（YOLOv8m，98.8MB）',mlite:'mAP50 — 轻量模型（YOLOv8n，11.7MB）',
-    imgs:'X光图像（训练903/验证112/测试114）',hpo:'AutoML超参优化 · TPE+MedianPruner · ep72',
+    imgs:'X光图像 · 训练集(干净多源统一,14,202张)',imgs2:'X光图像 · 测试集(945张独立 holdout,无泄漏)',clfm:'macro-AUC · 级联 10 类 type-only',hpo:'检测训练 · 100 轮 · 干净数据集',
     footerTxt:'⚠️ 仅供教育和研究用途 · 非医疗器械 · 请勿用于临床诊断',
-    saveImg:'保存',expJSON:'JSON',clear:'清除',
+    saveImg:'保存',expPDF:'PDF报告',heatmap:'热力图',clear:'清除',
+    heatmapComputing:'热力图计算中(~5秒)…',heatmapRemove:'移除热力图',heatmapNoBaseDet:'无高置信度检测,无法生成热力图。',
     confLeg:'置信度说明',high:'高 ≥70%',mid:'中 40–69%',low:'低 <40%',
-    notXray:'此图像可能不是X光片，结果可能不准确。',
-    ab1:'基于Optuna AutoML（72次trial，TPE+MedianPruner）训练的<strong>YOLOv8n</strong>骨折检测模型，含1,129张X光图像。',
-    ab2:'完整模型（YOLOv8m）：<strong>mAP50 90.4%</strong> | 轻量（YOLOv8n）：<strong>mAP50 75.8%</strong>',
-    ab3:'通过<strong>ONNX Runtime Web（WASM）</strong>实现100%本地推理，数据不上传。',
+    notXray:'基础图像校验：此图可能不是X光片，结果可能不准确。',
+    ab1:'<strong>检测 (YOLOv8m)</strong>:干净多源统一数据集 14,202 张训练(可复现 manifest,GRAZPEDWRI+HBFMID+FracAtlas 等 8 个验证来源)。',
+    ab2:'检测 v6 box 级 mAP50 <strong>0.82</strong>(阶段 6,27k 多源统一数据集训练)。图像级 AUC 与多机构外部验证待放射科医师标注后进行。',
+    abClf:'<strong>分类 (EfficientNet-B3 级联)</strong>:10 种骨折类型(Normal 由检测器处理),8,235 张训练 · macro-AUC <strong>0.984</strong> · TTA · ECE 0.045。',
+    ab3:'通过 <strong>ONNX Runtime Web</strong> 100% 本地推理 · 支持 DICOM(.dcm) · 数据不上传。',
     dis1:'仅用于<strong>教育和研究演示</strong>目的，<strong>非认证医疗器械</strong>。',
     dis2:'结果可能存在误差，医学图像解读请咨询有资质的放射科医生。',
     dis3:'作者对基于本应用输出所做决定不承担任何责任。',
     ftTransverse:'横形骨折',ftOblique:'斜形骨折',ftLongitudinal:'纵形骨折',
     ftComminuted:'粉碎性骨折',ftHairline:'裂缝骨折',ftSuspected:'疑似骨折',
-    vrdNormal:'正常 — 未发现骨折',vrdFracture:'检测到骨折',vrdUncertain:'不确定 — 需进一步检查',
+    vrdNormal:'当前阈值下未检测到疑似骨折区域',vrdFracture:'检测到疑似骨折区域',vrdUncertain:'不确定 — 需进一步检查',
     scrNormal:'在当前置信度阈值下未检测到骨折。',
     scrFracture:'检测到疑似骨折区域，进入分类阶段。',
-    clfIntro:'检测到的骨折类型：',
+    clfIntro:'骨折类型分类（整图）：',
+    clfLoading:'正在加载多任务分类器 (MTL, 50MB)…',clfUnavail:'分类模型不可用。',
+    clfWhole:'整图分类结果',clfTop3:'Top-3 候选',clfAcc:'测试准确率 91.63%',
+    clfOOD:'输入可能不是标准X光片,<strong>分类结果不可信</strong>,请勿参考。',
+    clfLowConf:'模型置信度低或候选接近 — <strong>建议放射科医生复核</strong>。',
+    clfNoDet:'检测阶段未定位到骨折区域。下方为<strong>整图分类(与检测独立)</strong>,请谨慎参考。',
+    clfNoFracture:'未见骨折',
+    clfCascadeNote:'检测模型未发现骨折,分类阶段已跳过(级联流程)。',
+    clfPerBoxProg:'正在为每个检测区域单独分类(共 {n} 个)',
+    clfPerBoxHeader:'每个骨折区域单独分类({n} 个区域,各自独立)',
+    clfPerBoxFailed:'区域分类失败',
+    clfDetConf:'检测置信',
     elapsed:'耗时',maxConf:'最高置信度',
+    scanning:'分析中…',
+    region:'处',regions:'处',
+    detection:'处骨折',detections:'处骨折',
+    exLoadErr:'示例图加载失败',
+    highThrHint:'置信度阈值过高（>70%），真实骨折可能被过滤。建议降至 0.25～0.50 重新检测。',
+    // Hero + USPs + Workflow (v13-marketing)
+    heroLive:'在线运行 · MultiTask v1 · 100% 浏览器内推理',
+    heroTitle:'可解释的骨折辅助诊断系统',
+    heroSub:'检测 + 多任务分类 + 临床专家规则。所有计算在你的浏览器中完成,医学影像永不离开设备。',
+    heroCta:'开始检测',heroSecCta:'技术详情',
+    usp1Title:'100% 本地推理',usp1Desc:'医学影像永不上传服务器。所有 AI 计算在你的浏览器中完成 — ONNX Runtime Web,零隐私风险。',
+    usp2Title:'检测 mAP50 = 0.82',usp2Desc:'YOLOv8m 在 27k 多源 X 光统一数据集上训练,有可复现 manifest,完整审计记录,真实数字。',
+    usp3Title:'多任务上下文感知',usp3Desc:'同时输出 <strong>位置 · 方向 · 形态学</strong>;Siamese 双输入 + EdgeGuidedAttention 拓扑门控。',
+    usp4Title:'临床专家规则',usp4Desc:'3 条医学逻辑规则 + 4 个状态码 + 智能边界警告 — 不是吐生概率,是可读的诊断建议。',
+    wfTitle:'⚙ Detection Pipeline · 五步级联推理',
+    wf1Name:'上传',wf1Meta:'JPG · PNG · WebP · <strong>DICOM</strong>',
+    wf2Name:'检测',wf2Meta:'YOLOv8m · <strong>mAP50 0.82</strong>',
+    wf3Name:'多任务分类',wf3Meta:'每框 · <strong>位置·方向·形态学</strong>',
+    wf4Name:'专家规则',wf4Meta:'3 规则 · <strong>4 状态码</strong>',
+    wf5Name:'报告',wf5Meta:'PDF · 热力图 · JSON',
+    statDet:'检测 mAP50 · YOLOv8m',statLoc:'MTL 位置 acc · Shaft/Joint',
+    statDir:'MTL 方向 acc · 横/斜/纵',statImg:'训练集 · 多源统一',
+    statHeads:'任务头 · 位置+方向+形态学',statLocal:'浏览器内推理 · 零上传',
+    abExpert:'<strong>临床专家系统</strong>: 3 条医学规则 + 4 状态码 + 三语临床文案。<em>不</em>是吐生概率,而是可读的诊断建议 + 风险警示。',
+    ab1:'<strong>检测 (YOLOv8m)</strong>: 多源统一数据集 27k 训练,可复现 manifest,完整审计记录。Box mAP50 <strong>0.82</strong> · 灵敏度 <strong>96%</strong> / 特异度 <strong>79%</strong>。',
+    abClf:'<strong>分类 (MultiTask Net)</strong>: Siamese EfficientNet-B3 双输入 + 3 任务头(位置·方向·形态学) + EdgeGuidedAttention 拓扑门控 + Uncertainty-Weighted Loss。位置 acc <strong>92%</strong>,方向 acc <strong>86%</strong>。',
   }
 };
 let LANG='zh';
@@ -573,6 +978,8 @@ function setLang(l){
   document.documentElement.lang=l==='ko'?'ko':l==='zh'?'zh':'en';
   document.querySelectorAll('.lang-btn').forEach(b=>b.classList.toggle('active',b.textContent.trim()===(l==='ko'?'한':l==='zh'?'中':'EN')));
   document.querySelectorAll('[data-i18n]').forEach(el=>{const k=el.getAttribute('data-i18n');const v=(I18N[l]||{})[k]||(I18N.en[k]);if(v!=null)el.innerHTML=v;});
+  // Re-render dynamic detection results in new language
+  if(typeof window.reRenderResults==='function') window.reRenderResults();
 }
 (function(){const ua=navigator.language||'';LANG=ua.startsWith('zh')?'zh':ua.startsWith('ko')?'ko':'en';setLang(LANG);})();
 </script>
@@ -606,20 +1013,15 @@ function setStage(id,state){// state: idle|active|done|fail
 }
 function setScanline(on){document.getElementById('scanline').classList.toggle('on',on);}
 function setRunSts(msg,cls=''){const e=document.getElementById('runSts');e.textContent=msg;e.className='run-sts'+(cls?' '+cls:'');}
-function setExport(on){['btnPNG','btnJSON','btnClear'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=!on;});}
+function setExport(on){['btnPNG','btnPDF','btnHeatmap','btnClear'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=!on;});}
 </script>
 
-<!-- ORT loader -->
-<script>
-(function(){
-  var s=document.createElement('script');s.src='./ort/ort.min.js';
-  s.onerror=function(){var s2=document.createElement('script');
-    s2.src='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js';
-    s2.onload=function(){window._ortFromCDN=true;};document.head.appendChild(s2);};
-  document.head.appendChild(s);
-})();
-</script>
-<script src="./examples_data.js"></script>
-<script src="./app.js"></script>
+<!-- ORT loader — version-pinned CDN (jsDelivr, cached globally) -->
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"
+        crossorigin="anonymous"
+        onload="window._ortFromCDN=true"></script>
+<!-- Multi-Task classifier wrapper (window.MTL) — must load BEFORE app.js -->
+<script src="./mtl_inference.js?v=6-calibration"></script>
+<script src="./app.js?v=14.3-numbers-honest"></script>
 </body>
 </html>

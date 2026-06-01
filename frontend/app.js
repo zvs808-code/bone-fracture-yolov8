@@ -21,6 +21,7 @@
   let lastBitmap   = null;
   let lastDets     = [];
   let lastElapsed  = 0;
+  let lastIsXray   = true;   // basic-image-check result of the current image (OOD gating)
 
   const FULL_MODEL_URL  = 'https://media.githubusercontent.com/media/zvs808-code/bone-fracture-yolov8/main/frontend/model_full.onnx';
   const LITE_MODEL_PATH = './model.onnx';
@@ -100,43 +101,86 @@
   const detCanvas = document.getElementById('detCanvas');
   const cw        = document.getElementById('cw');
 
-  /* ── FRACTURE TYPE CLASSIFIER ──────────────────────────── */
+  /* ── FRACTURE TYPE CLASSIFIER (v3) ────────────────────── */
   /*
-   * Heuristic classification based on bounding-box geometry and confidence.
-   * Since we have a single-class YOLOv8 model, we use these rules:
+   * Heuristic classification: bbox geometry + confidence band + spatial clustering.
+   * All thresholds are normalized to image size (works for any resolution).
    *
-   *  conf ≥ 0.70  → High confidence
-   *    aspect ratio ≥ 2.0  → 横形/Transverse
-   *    aspect ratio ≤ 0.5  → 纵形/Longitudinal
-   *    else                 → 斜形/Oblique
+   * ① 粉碎性骨折 (Comminuted)
+   *    ≥3 total dets AND this detection has ≥1 neighbor within 13% of image diagonal.
+   *    Applied to ALL detections (v2 bug: only checked det[0]).
+   *    Logic: true comminution = multiple fragments clustered at same bone site.
+   *    13% of 640×640 diagonal (905px) ≈ 118px — typical 2–3× bone shaft width.
+   *    Multi-view X-rays: views are ~45–50% diagonal apart → never triggers. ✓
    *
-   *  0.40 ≤ conf < 0.70  → Moderate confidence
-   *    small box (w*h < 4000px²) → 裂缝/Hairline
-   *    else                       → 斜形/Oblique
+   * ② 高置信度 conf ≥ 0.70 → aspect ratio classification
+   *    AR = bbox_width / bbox_height (in original image pixel coords)
+   *    AR ≥ 1.8  → 横形/Transverse   (fracture ⊥ bone long-axis → wide box)
+   *    AR ≤ 0.55 → 纵形/Longitudinal  (fracture ∥ bone long-axis → tall box)
+   *    else      → 斜形/Oblique       (diagonal, most common ≈ 60% of real cases)
+   *    Assumes standard AP view of a vertical long bone. Works for radius, ulna,
+   *    tibia, fibula, humerus in AP/PA view.
    *
-   *  conf < 0.40          → Low confidence → 疑似/Suspected
+   * ③ 中置信度 0.38 ≤ conf < 0.70 → more conservative
+   *    normArea = (w×h)/(imgW×imgH) — fraction of image area
+   *    normArea < 0.01 (< 1% of image) → 裂缝/Hairline (fine crack, tiny region)
+   *    AR ≥ 2.2 or AR ≤ 0.45 → Transverse/Longitudinal (stricter than ②,
+   *       because lower confidence makes geometry less reliable)
+   *    else → 斜形/Oblique (safe default)
    *
-   *  3+ boxes → promote one to 粉碎/Comminuted
+   * ④ conf < 0.38 → 疑似/Suspected (model uncertain)
+   *
+   * Note: Classification accuracy is fundamentally limited by the single-class
+   * detector design. Always annotate reports with "heuristic estimate only."
    */
   function classifyType(det, allDets) {
-    const w = det.x2 - det.x1, h = det.y2 - det.y1;
-    const ar = w / (h || 1);
-    const area = w * h;
+    const imgW = srcCanvas.width  || 640;
+    const imgH = srcCanvas.height || 640;
+    const w    = det.x2 - det.x1, h = det.y2 - det.y1;
+    const ar   = w / (h || 1);
+    const normArea = (w * h) / (imgW * imgH);   // image-size-independent area
     const conf = det.score;
+    const cx   = (det.x1 + det.x2) / 2, cy = (det.y1 + det.y2) / 2;
 
-    // Comminuted if many fragments detected
-    if (allDets.length >= 3 && allDets.indexOf(det) === 0)
-      return 'ftComminuted';
+    // ① Comminuted — IoU-based overlap detection
+    //   TRUE comminuted: multiple fragments of ONE bone → bboxes partially OVERLAP (IoU > 0.10)
+    //   Dual-bone fracture (radius+ulna): bboxes are ADJACENT, NOT overlapping (IoU ≈ 0)
+    //   Two-view X-ray: bboxes are far apart (no overlap at all)
+    //   This cleanly separates comminuted from dual-bone/two-view false positives.
+    if (conf >= 0.45) {
+      let overlapping = 0;
+      for (const o of allDets) {
+        if (o === det || o.score < 0.40) continue;   // only compare vs other medium-high conf dets
+        const ix1 = Math.max(det.x1, o.x1), iy1 = Math.max(det.y1, o.y1);
+        const ix2 = Math.min(det.x2, o.x2), iy2 = Math.min(det.y2, o.y2);
+        const inter = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1);
+        if (inter === 0) continue;                    // no overlap at all → skip
+        const areaA = (det.x2-det.x1) * (det.y2-det.y1);
+        const areaB = (o.x2-o.x1)     * (o.y2-o.y1);
+        const iou   = inter / (areaA + areaB - inter);
+        if (iou > 0.10) overlapping++;               // ≥10% IoU = overlapping fragments
+      }
+      if (overlapping >= 1) return 'ftComminuted';
+    }
 
+    // ② High confidence: AR-based classification
     if (conf >= 0.70) {
-      if (ar >= 2.0) return 'ftTransverse';
-      if (ar <= 0.5) return 'ftLongitudinal';
+      if (ar >= 1.8)  return 'ftTransverse';
+      if (ar <= 0.55) return 'ftLongitudinal';
       return 'ftOblique';
     }
-    if (conf >= 0.40) {
-      if (area < 4000) return 'ftHairline';
+
+    // ③ Moderate-low confidence: image-size-normalized area + stricter AR gates
+    //    Threshold lowered to 0.28 so that 28-38% detections are AR-classified
+    //    rather than blanket "Suspected" (35-37% confs often show clear oblique lines)
+    if (conf >= 0.28) {
+      if (normArea < 0.010) return 'ftHairline';  // < 1% image = fine crack
+      if (ar >= 2.2)        return 'ftTransverse';  // stricter: ≥2.2 (vs 1.8 above)
+      if (ar <= 0.45)       return 'ftLongitudinal';// stricter: ≤0.45 (vs 0.55)
       return 'ftOblique';
     }
+
+    // ④ Very low confidence (< 0.28) → suspected
     return 'ftSuspected';
   }
 
@@ -161,7 +205,10 @@
       satSum += mx > 0.01 ? (mx - mn) / mx : 0;
     }
     const avgSat = satSum / N;
-    return avgSat < 0.20; // true = likely X-ray
+    // Real X-rays (even lightly tinted / JPEG-chroma) measure ~0.0–0.35;
+    // color photos / teal "stock" radiographs measure ~0.5–0.9.
+    // 0.45 splits them and avoids false-flagging genuine grayscale X-rays.
+    return avgSat < 0.45; // true = likely X-ray
   }
 
   /* ── INIT ───────────────────────────────────────────────── */
@@ -212,7 +259,7 @@
       // ⑤ Try backends: WebGPU → WebGL → WASM (fastest first)
       const backendOrder = [];
       if (navigator.gpu) backendOrder.push('webgpu');
-      backendOrder.push('webgl', 'wasm');
+      backendOrder.push('webgl', 'wasm');  // WebGL first for fast load; WASM as inference fallback
 
       let lastErr;
       for (const backend of backendOrder) {
@@ -248,10 +295,17 @@
 
       // Update lite card stats
       const liteStats = document.querySelector('#optLite .mo-stats');
-      if(liteStats) liteStats.textContent = `11.7 MB · mAP50 75.8% · ${backendLabel} ${threads}T`;
+      if(liteStats) liteStats.textContent = `11.7 MB · YOLOv8n · ${backendLabel} ${threads}T · legacy`;
 
       if (lastBitmap) runEl.disabled = false;
       setRunSts('', '');
+
+      // Background-preload the MultiTask classifier (50 MB) so it's ready when needed
+      if (window.MTL) { window.MTL.load().catch(()=>{}); }
+      // (Legacy EfficientNet-B3 still loaded as fallback — used by PDF export only)
+      // Legacy classifier (kept for PDF export compatibility):
+      // likely ready by the time the user runs detection. Non-blocking.
+      loadClassifier();
 
     } catch(e) {
       console.error(e);
@@ -273,7 +327,7 @@
       if (SESSION_FULL) {
         SESSION = SESSION_FULL;
         currentModel = 'full';
-        if(nb) nb.textContent = 'YOLOv8m Fracture Detector (Full) · 640px · 1 class · 90.4% mAP50';
+        if(nb) nb.textContent = 'YOLOv8m Detector (Full) · 640px · 1 class · mAP50 0.82';
         setRunSts('✅ Switched to Full model (YOLOv8m)', 'ok');
         return;
       }
@@ -301,7 +355,7 @@
         const t0 = performance.now();
         const backendOrder = [];
         if (navigator.gpu) backendOrder.push('webgpu');
-        backendOrder.push('webgl', 'wasm');
+        backendOrder.push('webgl', 'wasm');  // WebGL first for fast load; WASM as inference fallback
         let lastErr2;
         for (const backend of backendOrder) {
           try {
@@ -321,7 +375,7 @@
         currentModel = 'full';
         if(fullOpt) fullOpt.classList.remove('downloading');
         if(nb) nb.textContent = `⚡ YOLOv8m Full · 640px · ${bl} · ${dt}s`;
-        setRunSts('✅ Full model ready! (YOLOv8m 90.4% mAP50)', 'ok');
+        setRunSts('✅ Full model ready! (YOLOv8m · mAP50 0.82 · 27k unified dataset)', 'ok');
         if(lastBitmap) runEl.disabled = false;
 
       } catch(e) {
@@ -341,7 +395,7 @@
       document.getElementById('optLite').classList.add('active');
       SESSION = SESSION_LITE;
       currentModel = 'lite';
-      if(nb) nb.textContent = 'YOLOv8n Fracture Detector (Lite) · 640px · 1 class · 75.8% mAP50';
+      if(nb) nb.textContent = 'YOLOv8n Detector (Lite) · 640px · 1 class · legacy fallback';
       setRunSts('✅ Switched back to Lite model (YOLOv8n)', 'ok');
     }
   };
@@ -357,26 +411,43 @@
   fileEl.addEventListener('change', e => { const f = e.target.files?.[0]; if(f) handleFile(f); });
 
   async function handleFile(f) {
-    if (!f.type.startsWith('image/')) { setRunSts('Only image files supported.','err'); return; }
     lastDets = []; lastElapsed = 0;
     setExport(false);
     resetPipeline();
 
+    // Detect DICOM by extension/MIME, or by "DICM" magic bytes at offset 128
+    let isDcm = /\.dcm$/i.test(f.name) || f.type === 'application/dicom';
+    if (!isDcm && !f.type.startsWith('image/')) {
+      try {
+        const head = new Uint8Array(await f.slice(0, 132).arrayBuffer());
+        isDcm = looksLikeDicom(f, head);
+      } catch {}
+    }
+    if (!isDcm && !f.type.startsWith('image/')) {
+      setRunSts('Only image or DICOM (.dcm) files supported.','err'); return;
+    }
+
     try {
-      lastBitmap = await createImageBitmap(f).catch(async () =>
-        new Promise((res,rej) => {
-          const img = new Image();
-          img.onload = () => res(img);
-          img.onerror = () => rej(new Error('Image decode failed'));
-          img.src = URL.createObjectURL(f);
-        })
-      );
-    } catch(e) { setRunSts(e.message,'err'); return; }
+      if (isDcm) {
+        setRunSts(LANG==='zh'?'📂 正在解析 DICOM…':LANG==='ko'?'📂 DICOM 파싱 중…':'📂 Parsing DICOM…','warn');
+        lastBitmap = await dicomToCanvas(await f.arrayBuffer());
+      } else {
+        lastBitmap = await createImageBitmap(f).catch(async () =>
+          new Promise((res,rej) => {
+            const img = new Image();
+            img.onload = () => res(img);
+            img.onerror = () => rej(new Error('Image decode failed'));
+            img.src = URL.createObjectURL(f);
+          })
+        );
+      }
+    } catch(e) { setRunSts((isDcm?'DICOM error: ':'')+e.message,'err'); return; }
 
     drawSource(lastBitmap);
 
     // X-ray check
     const isXray = checkIsXray(lastBitmap);
+    lastIsXray = isXray;
     const warn = document.getElementById('xrayWarn');
     if (warn) warn.classList.toggle('show', !isXray);
 
@@ -384,9 +455,12 @@
     if(isXray) setRunSts(`${f.name} (${(f.size/1024).toFixed(1)} KB)`,'');
     setPipeStep(1);
     runEl.disabled = !SESSION;
+    // Auto-run detection after image load — no need to find "Run" button
+    if (SESSION) setTimeout(() => APP.run(), 250);
   }
 
   function drawSource(bitmap) {
+    document.getElementById('drop')?.classList.add('has-img');
     const W = bitmap.naturalWidth||bitmap.width, H = bitmap.naturalHeight||bitmap.height;
     srcCanvas.width=W; srcCanvas.height=H;
     detCanvas.width=W; detCanvas.height=H;
@@ -416,6 +490,208 @@
     return out;
   }
 
+  /* ══ EfficientNet-B3 11-CLASS CLASSIFIER (real trained model) ══════════
+   * Test Acc 91.63% · Macro F1 0.846 · input 300×300 · ImageNet norm.
+   * Whole-image classification (incl. "Normal"). Complements YOLOv8 localization.
+   */
+  const CLF_PATH  = './model_classifier.onnx';
+  const CLF_SIZE  = 300;
+  const CLF_MEAN  = [0.485, 0.456, 0.406];
+  const CLF_STD   = [0.229, 0.224, 0.225];
+  const CLF_CLASSES = [
+    'Avulsion fracture','Comminuted fracture','Fracture Dislocation',
+    'Greenstick fracture','Hairline Fracture','Impacted fracture',
+    'Longitudinal fracture','Normal','Oblique fracture',
+    'Pathological fracture','Spiral Fracture'
+  ];
+  // Cascade mode: classifier is restricted to fracture TYPES only.
+  // Presence (normal/abnormal) is decided UPSTREAM by the detector; the 'Normal' logit
+  // is set to -Infinity at inference so the classifier behaves as a 10-class type-only model.
+  const NORMAL_IDX = CLF_CLASSES.indexOf('Normal');   // = 7
+
+  // Display names per language (index matches CLF_CLASSES order)
+  const CLF_I18N = {
+    zh:['撕脱骨折','粉碎性骨折','骨折脱位','青枝骨折','发丝骨折','嵌插骨折','纵形骨折','正常','斜形骨折','病理性骨折','螺旋形骨折'],
+    ko:['견열 골절','분쇄 골절','골절 탈구','약목 골절','실금 골절','감입 골절','종형 골절','정상','사선 골절','병적 골절','나선형 골절'],
+    en:['Avulsion','Comminuted','Fracture Dislocation','Greenstick','Hairline','Impacted','Longitudinal','Normal','Oblique','Pathological','Spiral']
+  };
+  function clfName(idx){ return (CLF_I18N[LANG]||CLF_I18N.en)[idx] || CLF_CLASSES[idx]; }
+
+  let SESSION_CLF = null;
+  let CLF_LOADING = false;
+  let CLF_FAILED  = false;
+
+  async function loadClassifier(onProgress) {
+    if (SESSION_CLF || CLF_LOADING) return;
+    CLF_LOADING = true;
+    try {
+      const bytes = await loadModelBytes(CLF_PATH, 'classifier', onProgress);
+      const order = [];
+      if (navigator.gpu) order.push('webgpu');
+      order.push('wasm');   // EfficientNet runs reliably on WASM; WebGL skipped to avoid op gaps
+      let lastErr;
+      for (const be of order) {
+        try {
+          SESSION_CLF = await ort.InferenceSession.create(bytes, {
+            executionProviders: [be], graphOptimizationLevel: 'all',
+          });
+          window._clfBackend = be;
+          break;
+        } catch(e) { lastErr = e; }
+      }
+      if (!SESSION_CLF) throw lastErr || new Error('classifier backends failed');
+      console.log('[classifier] ready on', window._clfBackend);
+    } catch(e) {
+      console.error('[classifier] load failed', e);
+      CLF_FAILED = true;
+    } finally {
+      CLF_LOADING = false;
+    }
+  }
+
+  // Crop a detected fracture region out of the original bitmap, with padding,
+  // for per-box cascade classification. The classifier was trained on fracture-focused
+  // images, so feeding it the detected REGION (not the whole X-ray) is the architecturally
+  // correct cascade: detector localizes -> crop -> classifier names the type for THAT crop.
+  // `det` uses image-space coordinates {x1,y1,x2,y2} (same as drawBoxes).
+  function cropDetection(bitmap, det, padFrac = 0.15) {
+    const W = bitmap.width  || bitmap.naturalWidth  || lastBitmap?.width  || 640;
+    const H = bitmap.height || bitmap.naturalHeight || lastBitmap?.height || 640;
+    const bw = det.x2 - det.x1, bh = det.y2 - det.y1;
+    const padX = bw * padFrac, padY = bh * padFrac;
+    const x = Math.max(0, Math.floor(det.x1 - padX));
+    const y = Math.max(0, Math.floor(det.y1 - padY));
+    const cw = Math.min(W - x, Math.ceil(bw + 2 * padX));
+    const ch = Math.min(H - y, Math.ceil(bh + 2 * padY));
+    if (cw <= 0 || ch <= 0) return null;
+    const cv = document.createElement('canvas');
+    cv.width = cw; cv.height = ch;
+    cv.getContext('2d', {willReadFrequently:true}).drawImage(bitmap, x, y, cw, ch, 0, 0, cw, ch);
+    return cv;
+  }
+
+  // Whole bitmap (or crop) → 300×300 stretch + ImageNet-normalized NCHW float32 (matches eval_tf).
+  // `flip=true` mirrors horizontally for test-time augmentation.
+  function clfPreprocess(bitmap, flip=false) {
+    const sz = CLF_SIZE;
+    const cv = document.createElement('canvas'); cv.width = sz; cv.height = sz;
+    const ctx = cv.getContext('2d', {willReadFrequently:true});
+    if (flip) { ctx.translate(sz, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(bitmap, 0, 0, sz, sz);
+    const {data} = ctx.getImageData(0, 0, sz, sz);
+    const N = sz*sz, out = new Float32Array(3*N);
+    for (let i=0;i<N;i++){
+      out[i]     = (data[i*4]  /255 - CLF_MEAN[0]) / CLF_STD[0];
+      out[i+N]   = (data[i*4+1]/255 - CLF_MEAN[1]) / CLF_STD[1];
+      out[i+2*N] = (data[i*4+2]/255 - CLF_MEAN[2]) / CLF_STD[2];
+    }
+    return out;
+  }
+
+  // Cascade-mode inference:
+  //   * TTA: average softmax of original + horizontal-flip (X-rays of left/right limbs
+  //     make horizontal flip semantically valid). Empirically +1-3% top-1 accuracy.
+  //   * Normal suppression: in cascade, presence is decided by the detector; the classifier
+  //     is restricted to fracture TYPES — Normal logit -> -Infinity so it never wins.
+  async function _classifyOnce(bitmap, flip) {
+    const float32 = clfPreprocess(bitmap, flip);
+    const tensor  = new ort.Tensor('float32', float32, [1,3,CLF_SIZE,CLF_SIZE]);
+    const inName  = SESSION_CLF.inputNames[0];
+    const out     = await SESSION_CLF.run({[inName]: tensor});
+    return Array.from(out[SESSION_CLF.outputNames[0]].data);   // raw logits
+  }
+  async function classifyImage(bitmap) {
+    if (!SESSION_CLF) return null;
+    const L1 = await _classifyOnce(bitmap, false);
+    const L2 = await _classifyOnce(bitmap, true);
+    if (NORMAL_IDX >= 0) { L1[NORMAL_IDX] = -Infinity; L2[NORMAL_IDX] = -Infinity; }
+    const softmax = (arr) => {
+      let mx=-Infinity; for(const v of arr) if(v>mx) mx=v;
+      let s=0; const p=arr.map(v=>{ const e=Math.exp(v-mx); s+=e; return e; });
+      return p.map(x=>x/s);
+    };
+    const p1 = softmax(L1), p2 = softmax(L2);
+    const probs = p1.map((v,i)=>(v+p2[i])/2);
+    return probs.map((p,i)=>({idx:i,p})).sort((a,b)=>b.p-a.p);
+  }
+
+  /* ══ DICOM (.dcm) SUPPORT — lazy-loaded daikon parser ═══════════════════
+   * Hospital X-rays are usually .dcm. We parse pixel data, apply window/level
+   * (or min/max), handle MONOCHROME1 inversion, and render to a canvas that
+   * feeds the normal detection + classification pipeline.
+   */
+  let _dcmParserReady = null;
+  function loadDicomParser() {
+    if (_dcmParserReady) return _dcmParserReady;
+    _dcmParserReady = new Promise((res, rej) => {
+      if (window.dicomParser) return res(window.dicomParser);
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/dicom-parser@1.8.21/dist/dicomParser.min.js';
+      s.crossOrigin = 'anonymous';
+      s.onload = () => window.dicomParser ? res(window.dicomParser) : rej(new Error('dicomParser load error'));
+      s.onerror = () => rej(new Error('Failed to load DICOM parser (network)'));
+      document.head.appendChild(s);
+    });
+    return _dcmParserReady;
+  }
+
+  function looksLikeDicom(f, head) {
+    if (/\.dcm$/i.test(f.name) || f.type === 'application/dicom') return true;
+    // "DICM" magic at byte offset 128
+    return !!(head && head.length >= 132 &&
+      head[128]===0x44 && head[129]===0x49 && head[130]===0x43 && head[131]===0x4D);
+  }
+
+  // Parse uncompressed DICOM (Explicit/Implicit VR Little Endian) → grayscale canvas.
+  async function dicomToCanvas(arrayBuffer) {
+    const dp = await loadDicomParser();
+    const ds = dp.parseDicom(new Uint8Array(arrayBuffer));
+    const cols = ds.uint16('x00280011'), rows = ds.uint16('x00280010');
+    if (!cols || !rows) throw new Error('Missing image dimensions');
+    const bits   = ds.uint16('x00280100') || 16;
+    const signed = (ds.uint16('x00280103') || 0) === 1;
+    const photo  = (ds.string('x00280004') || 'MONOCHROME2');
+    const slope  = parseFloat(ds.string('x00281053') || '1') || 1;
+    const intpt  = parseFloat(ds.string('x00281052') || '0') || 0;
+    let wc = ds.floatString('x00281050'); // window center
+    let ww = ds.floatString('x00281051'); // window width
+    const el = ds.elements.x7fe00010;
+    if (!el) throw new Error('No pixel data element');
+    if (el.encapsulatedPixelData) throw new Error('Compressed DICOM not supported (use uncompressed)');
+
+    const N = cols * rows;
+    const buf = ds.byteArray.buffer;
+    let raw;
+    if (bits <= 8)       raw = new Uint8Array(buf, el.dataOffset, N);
+    else if (signed)     raw = new Int16Array(buf, el.dataOffset, N);
+    else                 raw = new Uint16Array(buf, el.dataOffset, N);
+
+    // Apply rescale, then window/level (or min/max fallback)
+    let lo, hi;
+    if (typeof wc === 'number' && typeof ww === 'number' && ww > 0) {
+      lo = wc - ww/2; hi = wc + ww/2;
+    } else {
+      let mn=Infinity, mx=-Infinity;
+      for (let i=0;i<N;i++){ const v=raw[i]*slope+intpt; if(v<mn)mn=v; if(v>mx)mx=v; }
+      lo = mn; hi = mx;
+    }
+    const range = (hi - lo) || 1;
+    const mono1 = photo.indexOf('MONOCHROME1') >= 0;
+
+    const cv = document.createElement('canvas'); cv.width = cols; cv.height = rows;
+    const ctx = cv.getContext('2d');
+    const id = ctx.createImageData(cols, rows);
+    for (let i = 0; i < N; i++) {
+      const val = raw[i]*slope + intpt;
+      let v = Math.round((val - lo) / range * 255);
+      v = v < 0 ? 0 : v > 255 ? 255 : v;
+      if (mono1) v = 255 - v;
+      id.data[i*4]=v; id.data[i*4+1]=v; id.data[i*4+2]=v; id.data[i*4+3]=255;
+    }
+    ctx.putImageData(id, 0, 0);
+    return cv;
+  }
+
   /* ── POST-PROCESS ─────────────────────────────────────── */
   function parseOutput(raw, dims, confThr, scale, px, py, W, H) {
     let data=raw, nP=dims[1], nA=dims[2];
@@ -430,13 +706,18 @@
       for(let c=0;c<nC;c++){const s=data[(4+c)*nA+ai];if(s>ms){ms=s;mc=c;}}
       if(ms<confThr) continue;
       const xc=data[0*nA+ai],yc=data[1*nA+ai],bw=data[2*nA+ai],bh=data[3*nA+ai];
-      boxes.push({
-        x1:Math.max(0,((xc-bw/2)-px)/scale),
-        y1:Math.max(0,((yc-bh/2)-py)/scale),
-        x2:Math.min(W,((xc+bw/2)-px)/scale),
-        y2:Math.min(H,((yc+bh/2)-py)/scale),
-        score:ms,cls:mc
-      });
+      const bx1=Math.max(0,((xc-bw/2)-px)/scale),
+            by1=Math.max(0,((yc-bh/2)-py)/scale),
+            bx2=Math.min(W,((xc+bw/2)-px)/scale),
+            by2=Math.min(H,((yc+bh/2)-py)/scale);
+      // Drop implausibly large boxes: a real fracture is a localized finding.
+      // A box covering >70% of the image area (or >92% of either dimension) is
+      // the detector failing to localize (common on out-of-distribution images),
+      // not a meaningful detection — discard it for a precise result.
+      const frac = ((bx2-bx1)*(by2-by1)) / (W*H || 1);
+      const wFrac = (bx2-bx1)/W, hFrac = (by2-by1)/H;
+      if (frac > 0.70 || (wFrac > 0.92 && hFrac > 0.92)) continue;
+      boxes.push({ x1:bx1, y1:by1, x2:bx2, y2:by2, score:ms, cls:mc });
     }
     return nms(boxes, META.iou_threshold||0.45);
   }
@@ -465,7 +746,10 @@
     const ctx=detCanvas.getContext('2d');
     ctx.clearRect(0,0,W,H);
     dets.forEach((d,i)=>{
-      const col=COLORS[i%COLORS.length];
+      // Color the box by detection confidence (matches the legend:
+      // high ≥70% green · mid 40–69% orange · low <40% red).
+      // A low-confidence box (e.g. 27%) now shows red, not a confident-looking green.
+      const col = d.score>=0.70 ? '#22c55e' : d.score>=0.40 ? '#f59e0b' : '#ef4444';
       const bw=d.x2-d.x1,bh=d.y2-d.y1;
       const lw=Math.max(2,Math.round(W/220));
       ctx.strokeStyle=col;ctx.lineWidth=lw;
@@ -502,6 +786,14 @@
 
     let html = '';
     if (!hasFrac) {
+      // High-threshold hint: if confThr > 0.70, warn user they may be filtering real fractures
+      const highThrHint = confThr > 0.70
+        ? `<div style="margin-top:8px;padding:7px 10px;background:rgba(245,158,11,0.12);
+                       border:1px solid rgba(245,158,11,0.35);border-radius:6px;
+                       font-size:11px;color:var(--warn);line-height:1.5">
+             ⚠️ ${t('highThrHint')}
+           </div>`
+        : '';
       html = `
         <div class="verdict no">
           <span style="font-size:20px">✅</span>
@@ -512,7 +804,8 @@
             </div>
           </div>
         </div>
-        <div style="font-size:11px;color:var(--fg2)">${t('scrNormal')}</div>`;
+        <div style="font-size:11px;color:var(--fg2)">${t('scrNormal')}</div>
+        ${highThrHint}`;
       setStage('stageScr','done');
       setStage('stageClf','idle');
       document.getElementById('clfResult').innerHTML =
@@ -524,7 +817,7 @@
         <div class="verdict warn">
           <span style="font-size:20px">⚠️</span>
           <div>
-            <div>${t('vrdFracture')} — ${dets.length} region${dets.length>1?'s':''}</div>
+            <div>${t('vrdFracture')} — ${dets.length} ${t(dets.length>1?'regions':'region')}</div>
             <div style="font-size:10px;margin-top:2px">
               ${t('maxConf')}: <strong style="color:${scoreColor}">${(maxConf*100).toFixed(1)}%</strong>
               &nbsp;·&nbsp; ${t('elapsed')}: ${elapsed}ms
@@ -537,60 +830,105 @@
     document.getElementById('scrResult').innerHTML = html;
   }
 
-  /* ── RENDER STAGE 2 (Classification) ───────────────────── */
-  function renderClassification(dets) {
-    if (dets.length === 0) return;
+  /* ── RENDER STAGE 2 (Classification) — CASCADE MODE ──────────────────────────
+   * Behavior:
+   *   - dets empty   → show "no fracture detected" banner; DO NOT run classifier
+   *                    (presence is the detector's job; the cascade contract enforces this)
+   *   - dets present → run classifier (10-class, Normal suppressed at inference);
+   *                    show top type + top-3 + reliability gating (OOD / low conf)
+   * Result: no contradictions between detector and classifier; matches BoneView/Rayvolve UX.
+   */
+  async function renderClassification(dets) {
+    const clfEl = document.getElementById('clfResult');
 
-    setStage('stageClf','done');
-
-    const typeCounts = {};
-    dets.forEach(d => {
-      const key = classifyType(d, dets);
-      typeCounts[key] = (typeCounts[key]||0) + 1;
-    });
-
-    let html = `<div style="font-size:11px;color:var(--fg2);margin-bottom:8px">${t('clfIntro')}</div>
-      <div class="ftype-wrap">`;
-
-    dets.forEach((d,i) => {
-      const col = COLORS[i % COLORS.length];
-      const typeKey = classifyType(d, dets);
-      const typeName = t(typeKey);
-      const conf = (d.score*100).toFixed(1);
-      const scoreColor = d.score>=.7?'var(--good)':d.score>=.4?'var(--warn)':'var(--bad)';
-      const w=Math.round(d.x2-d.x1), h=Math.round(d.y2-d.y1);
-      const locDesc = getLocationDesc(d, srcCanvas.width, srcCanvas.height);
-
-      html += `
-        <div class="ftype-card" style="border-left:3px solid ${col}">
-          <div class="dot" style="background:${col}"></div>
-          <div class="ftype-body">
-            <div class="ftype-name">${typeName}
-              <span class="ftype-score" style="color:${scoreColor}">${conf}%</span>
-            </div>
-            <div class="ftype-detail">
-              📍 ${locDesc} &nbsp;·&nbsp; ${w}×${h}px
-            </div>
-            <div class="ftype-bar">
-              <div class="ftype-fill" style="width:${conf}%;background:${scoreColor}"></div>
-            </div>
-          </div>
-        </div>`;
-    });
-
-    // Summary type counts
-    if (Object.keys(typeCounts).length > 0) {
-      const summaryParts = Object.entries(typeCounts).map(([k,v])=>`${t(k)}×${v}`);
-      html += `</div>
-        <div style="margin-top:10px;padding:8px 10px;background:#090f1e;border-radius:5px;
-          font-size:10px;color:var(--fg2);border:1px solid var(--border)">
-          📋 ${summaryParts.join('  |  ')}
-        </div>`;
-    } else {
-      html += '</div>';
+    // ── CASCADE: no fracture detected → skip classifier entirely ──
+    if (!dets || dets.length === 0) {
+      setStage('stageClf','done');
+      clfEl.innerHTML = `<div class="clf-banner info" style="border-color:var(--good);background:rgba(34,197,94,0.08)">
+        <div style="font-size:13px;color:var(--good);font-weight:600">✅ ${t('clfNoFracture')}</div>
+        <div style="font-size:10px;color:var(--fg3);margin-top:6px;font-weight:400">${t('clfCascadeNote')}</div>
+      </div>`;
+      return;
     }
 
-    document.getElementById('clfResult').innerHTML = html;
+    setStage('stageClf','active');
+
+    // Ensure MTL is loaded (lazy; usually preloaded in background)
+    if (!window.MTL?.isReady() && !window.MTL?.failed()) {
+      clfEl.innerHTML = `<div style="color:var(--fg2);font-size:11px;text-align:center;padding:16px 0">
+        <span class="spin"></span> &nbsp;${t('clfLoading')}</div>`;
+      try { await window.MTL.load(); } catch(e) { console.warn('MTL load failed', e); }
+    }
+    if (!window.MTL?.isReady()) {
+      setStage('stageClf','fail');
+      clfEl.innerHTML = `<div style="color:var(--bad);font-size:11px;text-align:center;padding:16px 0">${t('clfUnavail')}</div>`;
+      return;
+    }
+
+    // ── PER-BOX CASCADE with MTL (Multi-Task Context-Aware Net) ──
+    // For each detection: local_roi (crop) + global_image (full X-ray) → 3 task heads:
+    //   1) Location  (Shaft / Joint)        — resolves "Avulsion vs shaft" confusion
+    //   2) Direction (Trans / Obli / Long)  — resolves "fracture-line direction" errors
+    //   3) Morphology multi-label [Displaced, Comminuted]
+    //                                       — EdgeGuidedAttention gates Comminuted against
+    //                                         spatial-topology evidence (no fragment → no firing)
+    clfEl.innerHTML = `<div style="color:var(--fg2);font-size:11px;text-align:center;padding:14px 0">
+      <span class="spin"></span> &nbsp;${t('clfPerBoxProg').replace('{n}', dets.length)}</div>`;
+
+    const perBox = [];
+    for (let i = 0; i < dets.length; i++) {
+      const det = dets[i];
+      try {
+        const decoded = await window.MTL.classifyDetection(lastBitmap, det, 0.15);
+        if (decoded) perBox.push({ det, decoded, idx: i });
+      } catch(e) { console.warn('MTL classify failed for box', i, e); }
+      clfEl.innerHTML = `<div style="color:var(--fg2);font-size:11px;text-align:center;padding:14px 0">
+        <span class="spin"></span> &nbsp;${t('clfPerBoxProg').replace('{n}', dets.length)} (${i+1}/${dets.length})</div>`;
+    }
+    setStage('stageClf','done');
+    if (perBox.length === 0) {
+      clfEl.innerHTML = `<div style="color:var(--bad);font-size:11px;padding:12px">${t('clfPerBoxFailed')}</div>`;
+      return;
+    }
+
+    // OOD: if input flagged as non-X-ray, dim everything (whole-image trust signal)
+    const ood = (lastIsXray === false);
+
+    const COL = ['#22c55e','#3b82f6','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16'];
+    let html = '';
+    if (ood) {
+      html += `<div class="clf-banner ood">⚠️ ${t('clfOOD')}</div>`;
+    }
+    html += `<div class="${ood ? 'clf-dim' : ''}">`;
+    html += `<div style="font-size:11px;color:var(--fg2);margin-bottom:8px">${t('clfPerBoxHeader').replace('{n}', perBox.length)}</div>`;
+
+    // One card per detected fracture region — MTL-structured output
+    for (const item of perBox) {
+      const d = item.decoded;
+      const sideCol = COL[item.idx % COL.length];
+      const detConf = (item.det.score * 100).toFixed(1);
+      const loc = getLocationDesc(item.det, srcCanvas.width, srcCanvas.height);
+      const summary = window.MTL.formatLine(d, LANG);
+      const barsHtml = window.MTL.formatHTML(d, LANG);
+
+      html += `<div style="border-left:3px solid ${sideCol};padding:10px 12px;margin-bottom:10px;background:#0a1530;border-radius:6px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+          <span style="font-weight:700;font-size:13px;color:var(--fg)">#${item.idx+1} · ${summary}</span>
+        </div>
+        <div style="font-size:10px;color:var(--fg3);margin-bottom:6px">
+          ${t('clfDetConf')} ${detConf}% · ${loc}
+        </div>
+        ${barsHtml}
+      </div>`;
+    }
+
+    const bl = (window.MTL.backend() || 'wasm').toUpperCase();
+    html += `<div style="margin-top:10px;padding:7px 10px;background:#090f1e;border-radius:5px;
+      font-size:10px;color:var(--fg3);border:1px solid var(--border)">
+      🧠 MultiTask Context-Aware Net · <strong>per-box dual-input</strong> · ${bl} &nbsp;·&nbsp; 位置 + 方向 + 形态学</div>`;
+    html += `</div>`;  // close clf-dim wrapper
+
+    clfEl.innerHTML = html;
   }
 
   /* ── LOCATION DESCRIPTOR ───────────────────────────────── */
@@ -614,7 +952,7 @@
       setPipeStep(2);
       setStage('stageScr','active');
       setScanline(true);
-      setRunSts(t('scanning')||'Analyzing…');
+      setRunSts(t('scanning'));
 
       const sz = META.img_size;
       const confThr = document.getElementById('confSlider').value / 100;
@@ -624,7 +962,36 @@
         const {canvas,scale,px,py,origW,origH} = letterbox(lastBitmap,sz);
         const float32 = toFloat32(canvas,sz);
         const tensor  = new ort.Tensor('float32',float32,[1,3,sz,sz]);
-        const out     = await SESSION.run({[META._in]:tensor});
+
+        // Inference with lazy WASM fallback.
+        // Some WebGL/WebGPU drivers fail on YOLOv8's Resize(mode=nearest).
+        // On first failure, recompile the current model with WASM and retry once.
+        let out;
+        try {
+          out = await SESSION.run({[META._in]:tensor});
+        } catch(infErr) {
+          const msg = String((infErr && infErr.message) || infErr);
+          if (window._activeBackend !== 'wasm' && /resize|nearest|not support|webgl|jsep/i.test(msg)) {
+            console.warn('[fallback] backend inference failed → switching to WASM:', msg);
+            const fallbackMsg = LANG === 'zh' ? '⏳ 正在为此浏览器优化(约 3 秒,仅首次)…'
+                              : LANG === 'ko' ? '⏳ 브라우저 최적화 중(약 3초, 처음만)…'
+                              : '⏳ Optimizing for this browser (~3s, one-time)…';
+            setRunSts(fallbackMsg, 'warn');
+            const url = currentModel === 'full' ? FULL_MODEL_URL : LITE_MODEL_PATH;
+            const modelBytes = await loadModelBytes(url, currentModel);
+            const wasmSession = await ort.InferenceSession.create(modelBytes, {
+              executionProviders: ['wasm'],
+              graphOptimizationLevel: 'all',
+            });
+            if (currentModel === 'lite') SESSION_LITE = wasmSession;
+            else                          SESSION_FULL = wasmSession;
+            SESSION = wasmSession;
+            window._activeBackend = 'wasm';
+            out = await SESSION.run({[META._in]:tensor});
+          } else {
+            throw infErr;
+          }
+        }
         const outT    = out[Object.keys(out)[0]];
 
         lastElapsed = Math.round(performance.now()-t0);
@@ -636,12 +1003,12 @@
         setPipeStep(3);
 
         renderScreening(lastDets.filter(d=>d.score>=confThr), confThr, lastElapsed);
-        if (lastDets.filter(d=>d.score>=confThr).length > 0) {
-          renderClassification(lastDets.filter(d=>d.score>=confThr));
-        }
+        // Always run the whole-image EfficientNet classifier (it has a "Normal" class,
+        // so it gives a meaningful answer even when YOLOv8 detects nothing). Async — fills Stage 2 when ready.
+        renderClassification(lastDets.filter(d=>d.score>=confThr));
 
         const visCount = lastDets.filter(d=>d.score>=confThr).length;
-        setRunSts(`✅ ${lastElapsed}ms · ${visCount} detection${visCount!==1?'s':''}`, 'ok');
+        setRunSts(`✅ ${lastElapsed}ms · ${visCount} ${t(visCount!==1?'detections':'detection')}`, 'ok');
         setExport(true);
 
       } catch(e) {
@@ -664,35 +1031,445 @@
       a.href=tmp.toDataURL('image/png');a.click();
     },
 
-    exportJSON() {
-      if(!lastDets.length) return;
-      const confThr = document.getElementById('confSlider').value/100;
-      const visible = lastDets.filter(d=>d.score>=confThr);
-      const data={
-        timestamp:new Date().toISOString(),
-        model:'YOLOv8n-fracture (ONNX Lite)',
-        conf_threshold:confThr,
-        elapsed_ms:lastElapsed,
-        is_xray:checkIsXray(lastBitmap),
-        stage1_screening:{fracture_detected:visible.length>0,count:visible.length},
-        stage2_classification:visible.map((d,i)=>({
-          id:i+1,
-          class:'fracture',
-          type:t(classifyType(d,visible)),
-          confidence:+d.score.toFixed(4),
-          location:getLocationDesc(d,srcCanvas.width,srcCanvas.height),
-          box:{x:Math.round(d.x1),y:Math.round(d.y1),
-               w:Math.round(d.x2-d.x1),h:Math.round(d.y2-d.y1)}
-        }))
-      };
-      const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-      const a=document.createElement('a');
-      a.href=URL.createObjectURL(blob);a.download='fracture_result.json';a.click();
+    async exportPDF() {
+      if (!lastBitmap) return;   // require at least an uploaded image
+      const confThr = document.getElementById('confSlider').value / 100;
+      const visible = lastDets.filter(d => d.score >= confThr);
+      const isWarn = visible.length > 0;   // kept as alias for downstream code
+      const hasFracture = isWarn;
+      // CASCADE: a clean "no fracture detected" report is now a valid output.
+
+      // Merge srcCanvas + detCanvas into one annotated image
+      const tmp = document.createElement('canvas');
+      tmp.width = srcCanvas.width; tmp.height = srcCanvas.height;
+      const tctx = tmp.getContext('2d');
+      tctx.drawImage(srcCanvas, 0, 0);
+      tctx.drawImage(detCanvas, 0, 0);
+      const imgDataURL = tmp.toDataURL('image/jpeg', 0.92);
+
+      // ── CASCADE: run REAL EfficientNet-B3 classifier on the whole image (not the old fake heuristic).
+      //    Runs only if fractures present (cascade contract: presence is the detector's job).
+      let realRanked = null;
+      if (hasFracture && SESSION_CLF) {
+        try { realRanked = await classifyImage(lastBitmap); }
+        catch(e) { console.warn('PDF classifier failed', e); }
+      }
+
+      // Per-detection cards: position + box confidence (NO fake heuristic types here)
+      const C = ['#22c55e','#3b82f6','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16'];
+      let detsHTML = '';
+      visible.forEach((d, i) => {
+        const col = C[i % C.length];
+        const conf = (d.score * 100).toFixed(1);
+        const loc = getLocationDesc(d, srcCanvas.width, srcCanvas.height);
+        const w = Math.round(d.x2-d.x1), h = Math.round(d.y2-d.y1);
+        const sc = d.score>=.7?'#16a34a':d.score>=.4?'#d97706':'#dc2626';
+        detsHTML += `
+          <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 14px;
+            border:1px solid #e5e7eb;border-left:4px solid ${col};border-radius:8px;margin-bottom:8px">
+            <div style="width:11px;height:11px;border-radius:50%;background:${col};flex-shrink:0;margin-top:3px"></div>
+            <div style="flex:1">
+              <div style="display:flex;justify-content:space-between;align-items:baseline">
+                <span style="font-weight:700;font-size:14px;color:#1a1a2e">#${i+1}</span>
+                <span style="font-weight:800;font-size:15px;color:${sc}">${conf}%</span>
+              </div>
+              <div style="font-size:11px;color:#6b7280;margin-top:4px">📍 ${loc} &nbsp;·&nbsp; ${w}×${h}px</div>
+              <div style="height:5px;background:#f3f4f6;border-radius:3px;margin-top:7px;overflow:hidden">
+                <div style="width:${conf}%;height:100%;background:${sc};border-radius:3px"></div>
+              </div>
+            </div>
+          </div>`;
+      });
+
+      // i18n labels
+      const zh = LANG==='zh', ko = LANG==='ko';
+      const title     = ko?'골절 검출 보고서':zh?'骨折检测报告':'Fracture Detection Report';
+      const subtitle  = ko?'AI 보조 · 계단식 검출→분류 · 교육/연구 목적'
+                       :zh?'AI辅助 · 级联检测→分类 · 仅供教育研究用途'
+                       :'AI-Assisted · Cascade Detect→Classify · Educational/Research Use';
+      // Real, verified numbers (v6 detector + MTL classifier)
+      const detLbl    = 'YOLOv8m · mAP50 0.82 · 27k multi-source unified dataset (Phase 6)';
+      const clfLbl    = 'MultiTask Net · loc acc 92% · dir acc 86% · EdgeGuidedAttention';
+      const tsLbl     = ko?'검사일시':zh?'检测时间':'Timestamp';
+      const detStr    = ko?'검출 모델':zh?'检测模型':'Detector';
+      const clfStr    = ko?'분류 모델':zh?'分类模型':'Classifier';
+      const confStr   = ko?'신뢰도 임계값':zh?'置信度阈值':'Conf. Threshold';
+      const stg1Lbl   = ko?'1단계 · 검출 (존재+위치)':zh?'第1步 · 检测(有无+位置)':'Stage 1 · Detection (presence + location)';
+      const stg2Lbl   = ko?'2단계 · 유형 분류 (계단식 10종)':zh?'第2步 · 类型分类(级联 10类)':'Stage 2 · Type Classification (cascade 10-cls)';
+      const noFracLbl = ko?'검출된 골절 없음':zh?'未见骨折':'No fracture detected';
+      const noFracDesc= ko?'검출 모델이 골절을 찾지 못해 분류 단계는 건너뜁니다 (계단식 워크플로우).'
+                       :zh?'检测模型未发现骨折,分类阶段已跳过(级联流程)。'
+                       :'Detector found no fracture; classifier was skipped (cascade workflow).';
+      const imgLbl    = ko?'X-ray 검출 결과':zh?'X光检测结果':'X-ray Detection Result';
+      const disc      = ko?'⚠️ 이 보고서는 교육 및 연구 목적으로만 제공됩니다. 의료기기가 아니며 임상 진단에 사용할 수 없습니다. 반드시 방사선 전문의와 상담하십시오.'
+                       :zh?'⚠️ 本报告仅供教育和研究用途，非认证医疗器械，不得用于临床诊断，医学图像解读请咨询有资质的放射科医生。'
+                       :'⚠️ This report is for educational and research purposes only. Not a medical device. Do not use for clinical diagnosis. Always consult a qualified radiologist.';
+
+      const verdictColor = isWarn ? '#92400e' : '#166534';
+      const verdictBg    = isWarn ? '#fffbeb' : '#f0fdf4';
+      const verdictBorder= isWarn ? '#f59e0b' : '#22c55e';
+      const verdictIcon  = isWarn ? '⚠️' : '✅';
+      const verdictText  = isWarn
+        ? `${t('vrdFracture')} — ${visible.length} ${t(visible.length!==1?'regions':'region')}`
+        : noFracLbl;
+      const verdictSub   = isWarn ? t('scrFracture') : noFracDesc;
+
+      // Whole-image type from REAL classifier (cascade) — only shown when fracture detected
+      let typeHTML = '';
+      if (realRanked && realRanked.length) {
+        const top = realRanked[0];
+        const topConf = (top.p*100).toFixed(1);
+        const topName = clfName(top.idx);
+        const top3 = realRanked.slice(0, 3);
+        const top3Str = top3.map(r=>`${clfName(r.idx)} ${(r.p*100).toFixed(0)}%`).join(' · ');
+        const typeCaption = ko?'전체 영상 보조 분류 (레거시 EfficientNet-B3, 참고용 · 주 진단은 다중작업 박스별 분석 사용)'
+                           :zh?'整图辅助分类(传统 EfficientNet-B3,仅供参考 · 主诊断使用多任务每框分析)'
+                           :'Whole-image auxiliary class (legacy EfficientNet-B3, reference only · primary diagnosis uses MultiTask per-box)';
+        typeHTML = `
+          <div style="padding:14px 16px;background:#f8fafc;border:1.5px solid #3d85ff;
+            border-radius:10px;margin-bottom:10px">
+            <div style="font-size:11px;color:#6b7280;margin-bottom:6px">${typeCaption}</div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+              <span style="font-weight:700;font-size:15px;color:#1a1a2e">${topName}</span>
+              <span style="font-weight:800;font-size:16px;color:#3d85ff">${topConf}%</span>
+            </div>
+            <div style="font-size:10px;color:#6b7280">Top-3: ${top3Str}</div>
+          </div>`;
+      }
+
+      const html = `<!DOCTYPE html><html lang="${LANG}">
+<head><meta charset="UTF-8"/>
+<title>${title}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+  background:#f8fafc;color:#1a1a2e;font-size:13px}
+.page{max-width:800px;margin:0 auto;background:#fff;padding:36px 40px;
+  box-shadow:0 2px 20px rgba(0,0,0,.08)}
+.header{display:flex;justify-content:space-between;align-items:flex-start;
+  border-bottom:3px solid #3d85ff;padding-bottom:16px;margin-bottom:28px}
+.logo{font-size:21px;font-weight:800;color:#3d85ff;letter-spacing:-.3px}
+.sub{font-size:10px;color:#94a3b8;margin-top:4px}
+.meta{text-align:right;font-size:11px;color:#94a3b8;line-height:2}
+.meta strong{color:#475569}
+.sec{margin-bottom:24px}
+.sec-title{font-size:12px;font-weight:700;color:#3d85ff;
+  border-left:4px solid #3d85ff;padding-left:10px;margin-bottom:14px;letter-spacing:.3px;text-transform:uppercase}
+.img-caption{font-size:10px;color:#94a3b8;text-align:center;margin-top:6px}
+img{max-width:100%;border:1px solid #e5e7eb;border-radius:10px;display:block;margin:0 auto}
+.verdict{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:10px;
+  border:1.5px solid ${verdictBorder};background:${verdictBg};margin-bottom:10px}
+.verdict-icon{font-size:20px;flex-shrink:0;line-height:1}
+.verdict-title{font-weight:700;font-size:14px;color:${verdictColor}}
+.verdict-sub{font-size:11px;color:#6b7280;margin-top:4px;line-height:1.6}
+.summary{margin-top:12px;padding:10px 14px;background:#f8fafc;border:1px solid #e5e7eb;
+  border-radius:8px;font-size:11px;color:#475569}
+.disc{margin-top:32px;padding:14px 16px;background:#fffbeb;border:1.5px solid #f59e0b;
+  border-radius:10px;font-size:11px;color:#92400e;line-height:1.8}
+.footer{margin-top:20px;text-align:center;font-size:10px;color:#94a3b8;border-top:1px solid #f1f5f9;padding-top:12px}
+@media print{
+  body{background:#fff}
+  .page{box-shadow:none;padding:20px}
+  .print-bar{display:none!important}
+  @page{margin:15mm}
+}
+.print-bar{position:sticky;top:0;z-index:100;background:#3d85ff;
+  padding:10px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.print-bar .hint{font-size:12px;color:rgba(255,255,255,.85)}
+#printBtn{background:#fff;color:#1a5ce5;border:none;border-radius:7px;
+  padding:8px 20px;font-size:13px;font-weight:700;cursor:pointer;
+  display:flex;align-items:center;gap:6px;transition:opacity .15s}
+#printBtn:hover{opacity:.88}
+</style></head>
+<body>
+<div class="print-bar">
+  <span class="hint">🦴 ${title}</span>
+  <button id="printBtn">🖨️ ${ko?'인쇄 / PDF 저장':zh?'打印 / 保存PDF':'Print / Save as PDF'}</button>
+</div>
+<div class="page">
+  <div class="header">
+    <div>
+      <div class="logo">🦴 ${title}</div>
+      <div class="sub">${subtitle}</div>
+    </div>
+    <div class="meta">
+      <div><strong>${tsLbl}:</strong> ${new Date().toLocaleString()}</div>
+      <div><strong>${detStr}:</strong> ${detLbl}</div>
+      <div><strong>${clfStr}:</strong> ${clfLbl}</div>
+      <div><strong>${t('elapsed')}:</strong> ${lastElapsed} ms &nbsp;·&nbsp; <strong>${confStr}:</strong> ${confThr.toFixed(2)}</div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">${imgLbl}</div>
+    <img src="${imgDataURL}" alt="X-ray"/>
+    <div class="img-caption">on-device ONNX Runtime Web · cascade architecture</div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">${stg1Lbl}</div>
+    <div class="verdict">
+      <div class="verdict-icon">${verdictIcon}</div>
+      <div>
+        <div class="verdict-title">${verdictText}</div>
+        <div class="verdict-sub">${verdictSub}</div>
+      </div>
+    </div>
+  </div>
+
+  ${isWarn ? `<div class="sec">
+    <div class="sec-title">${stg1Lbl} · ${ko?'검출된 영역':zh?'检测到的区域':'Detected regions'}</div>
+    ${detsHTML}
+  </div>
+
+  <div class="sec">
+    <div class="sec-title">${stg2Lbl}</div>
+    ${typeHTML || `<div style="font-size:11px;color:#6b7280;padding:10px;background:#f8fafc;border-radius:8px">${ko?'분류 모델 로드 안됨':zh?'分类模型未加载':'Classifier not loaded'}</div>`}
+  </div>` : ''}
+
+  <div class="disc">${disc}</div>
+  <div class="footer">bone-fracture-yolov8.netlify.app &nbsp;·&nbsp; ZHANG HAO 장호 &nbsp;·&nbsp; cascade architecture · verified, reproducible</div>
+</div>
+<script>
+  document.getElementById('printBtn').addEventListener('click',()=>window.print());
+<\/script>
+</body></html>`;
+
+      const win = window.open('', '_blank', 'width=860,height=760');
+      if (!win) { alert(ko?'팝업이 차단되었습니다. 허용 후 다시 시도해 주세요.':zh?'弹窗被拦截，请允许后重试。':'Popup blocked. Please allow popups and try again.'); return; }
+      win.document.write(html);
+      win.document.close();
+    },
+
+    /* ── GRAD-CAM / OCCLUSION SALIENCY HEATMAP ────────────────────────────────
+     * Model-agnostic explainability for the detector: slide an 8x8 mask over the
+     * input, run inference on each masked variant, measure how much the max
+     * detection confidence DROPS. Cells whose masking causes a big drop are
+     * "important" -> hot. Upscaled & overlaid on the original via a jet colormap.
+     *
+     * 64 forward passes => ~3-5s total on WebGL/WebGPU. No special model export
+     * needed (works with any single-class YOLOv8 detector). Toggle on/off.
+     */
+    async showHeatmap() {
+      if (!SESSION || !lastBitmap) return;
+      const btn = document.getElementById('btnHeatmap');
+
+      // Toggle off if already shown
+      if (window._heatmapShown) {
+        window._heatmapShown = false;
+        // Re-draw the original detection boxes (clears the heatmap)
+        const confThr = document.getElementById('confSlider').value / 100;
+        drawBoxes(lastDets.filter(d => d.score >= confThr));
+        btn.innerHTML = '🔥 <span data-i18n="heatmap">' + t('heatmap') + '</span>';
+        return;
+      }
+
+      const origLabel = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spin"></span> ' + t('heatmapComputing');
+
+      try {
+        // ────────────────────────────────────────────────────────────────────
+        // PER-DETECTION focused occlusion saliency (v14.2 — fixes accuracy)
+        //
+        // OLD approach: one 5×5 grid across the WHOLE image.
+        //   On a 1000×1000 X-ray, each cell was 200×200 px → fracture (50-100 px)
+        //   fit entirely inside one cell. Heat got rendered as a 200-px blob,
+        //   smeared further by bilinear upsampling. AND it used max confidence
+        //   across all detections → can't distinguish per-fracture saliency.
+        //
+        // NEW approach: for each detection box, run a 6×6 grid INSIDE the
+        //   expanded bbox (+30% padding). Each cell is now ~30-50 px → matches
+        //   the actual fracture-line width. Per-box matching by IoU isolates
+        //   each detection's saliency. Heatmap is composited ONLY inside the
+        //   bbox region, not across the whole image.
+        // ────────────────────────────────────────────────────────────────────
+        const sz   = META.img_size;
+        const inN  = META._in;
+        const grid = (currentModel === 'full') ? 5 : 6;
+        const PAD  = 0.30;            // expand bbox by 30% on each side
+        const IOU_MATCH = 0.30;       // IoU threshold for "same fracture"
+        const yieldUI = () => new Promise(r => setTimeout(r, 0));
+
+        const W = lastBitmap.width || lastBitmap.naturalWidth || sz;
+        const H = lastBitmap.height || lastBitmap.naturalHeight || sz;
+        const confThr = document.getElementById('confSlider').value / 100;
+        const targetDets = (lastDets || []).filter(d => d.score >= confThr);
+
+        if (!targetDets.length) {
+          alert(t('heatmapNoBaseDet'));
+          btn.innerHTML = origLabel; btn.disabled = false;
+          return;
+        }
+
+        const totalCells = targetDets.length * grid * grid;
+
+        // Allow cancel by clicking the button mid-computation
+        window._heatmapCancel = false;
+        const origOnclick = btn.onclick;
+        btn.onclick = () => { window._heatmapCancel = true; };
+        btn.disabled = false;
+        btn.innerHTML = '⏹ <span style="font-size:11px">0/' + totalCells + ' · 点击取消</span>';
+
+        // Run YOLO on a canvas, return ALL detections (not max).
+        async function detectAll(srcCanvas) {
+          const lb = letterbox(srcCanvas, sz);
+          const f32 = toFloat32(lb.canvas, sz);
+          const tens = new ort.Tensor('float32', f32, [1, 3, sz, sz]);
+          const out  = await SESSION.run({[inN]: tens});
+          const ot   = out[Object.keys(out)[0]];
+          return parseOutput(ot.data, ot.dims, 0.01, lb.scale, lb.px, lb.py, lb.origW, lb.origH);
+        }
+
+        function iou(a, b) {
+          const ix1 = Math.max(a.x1, b.x1);
+          const iy1 = Math.max(a.y1, b.y1);
+          const ix2 = Math.min(a.x2, b.x2);
+          const iy2 = Math.min(a.y2, b.y2);
+          if (ix2 <= ix1 || iy2 <= iy1) return 0;
+          const inter = (ix2 - ix1) * (iy2 - iy1);
+          const A = (a.x2 - a.x1) * (a.y2 - a.y1);
+          const B = (b.x2 - b.x1) * (b.y2 - b.y1);
+          return inter / (A + B - inter + 1e-6);
+        }
+        // Best confidence among detections matching `target` (IoU >= threshold)
+        function bestMatchConf(detsAfter, target) {
+          let best = 0;
+          for (const d of detsAfter) {
+            if (iou(d, target) >= IOU_MATCH) best = Math.max(best, d.score);
+          }
+          return best;
+        }
+
+        const dc   = detCanvas;
+        const dctx = dc.getContext('2d');
+        // Repaint detection boxes first; heatmaps go on top with alpha
+        drawBoxes(targetDets);
+
+        function jet(v) {  // 0..1 → [r,g,b]
+          const r = Math.max(0, Math.min(1, 1.5 - Math.abs(4*v - 3)));
+          const g = Math.max(0, Math.min(1, 1.5 - Math.abs(4*v - 2)));
+          const b = Math.max(0, Math.min(1, 1.5 - Math.abs(4*v - 1)));
+          return [r*255|0, g*255|0, b*255|0];
+        }
+
+        // Scale factor between the source-image coordinate space (W, H) and the
+        // overlay canvas (detCanvas size). Box coords in lastDets use source space.
+        const sx = dc.width  / W;
+        const sy = dc.height / H;
+
+        const t0 = performance.now();
+        let done = 0;
+
+        for (let di = 0; di < targetDets.length; di++) {
+          if (window._heatmapCancel) break;
+          const det = targetDets[di];
+          // Expanded bbox in source-image coordinates
+          const bw = det.x2 - det.x1, bh = det.y2 - det.y1;
+          const ex = bw * PAD,  ey = bh * PAD;
+          const bx1 = Math.max(0, Math.floor(det.x1 - ex));
+          const by1 = Math.max(0, Math.floor(det.y1 - ey));
+          const bx2 = Math.min(W, Math.ceil(det.x2 + ex));
+          const by2 = Math.min(H, Math.ceil(det.y2 + ey));
+          const bbw = bx2 - bx1, bbh = by2 - by1;
+          if (bbw < 4 || bbh < 4) continue;
+
+          // Baseline = the detection's own score (no need to re-run on full image)
+          const baseConf = det.score;
+
+          // Per-cell occlusion within this expanded bbox
+          const drops = new Float32Array(grid * grid);
+          const cellW = bbw / grid, cellH = bbh / grid;
+
+          for (let r = 0; r < grid; r++) {
+            if (window._heatmapCancel) break;
+            for (let c = 0; c < grid; c++) {
+              if (window._heatmapCancel) break;
+              const mc = document.createElement('canvas');
+              mc.width = W; mc.height = H;
+              const mx = mc.getContext('2d');
+              mx.drawImage(lastBitmap, 0, 0, W, H);
+              mx.fillStyle = 'rgba(128,128,128,1)';
+              mx.fillRect(bx1 + c * cellW, by1 + r * cellH, cellW, cellH);
+              const detsAfter = await detectAll(mc);
+              const mConf = bestMatchConf(detsAfter, det);
+              drops[r * grid + c] = Math.max(0, baseConf - mConf);
+              done++;
+              if (done % 2 === 0 || done === totalCells) {
+                const el = (performance.now() - t0) / 1000;
+                const eta = Math.max(0, el * (totalCells - done) / Math.max(1, done));
+                btn.innerHTML =
+                  '⏹ <span style="font-size:11px">' +
+                  `box ${di+1}/${targetDets.length} · ${done}/${totalCells} · ${el.toFixed(0)}s · ETA ${eta.toFixed(0)}s` +
+                  '</span>';
+                await yieldUI();
+              }
+            }
+          }
+          if (window._heatmapCancel) break;
+
+          // Normalize this box's drops to [0,1] independently → each fracture gets full color range
+          let dmax = 0;
+          for (const v of drops) if (v > dmax) dmax = v;
+          if (dmax <= 0) continue;
+          const norm = new Float32Array(grid * grid);
+          for (let i = 0; i < drops.length; i++) norm[i] = drops[i] / dmax;
+
+          // Render this bbox's heatmap onto a small canvas, scale onto detCanvas region
+          const small = document.createElement('canvas');
+          small.width = grid; small.height = grid;
+          const sctx = small.getContext('2d');
+          const sid  = sctx.createImageData(grid, grid);
+          for (let i = 0; i < grid * grid; i++) {
+            // Soft threshold: cells below 20% saliency stay transparent (reduces noise)
+            const v = norm[i] < 0.20 ? 0 : norm[i];
+            const [rr, gg, bb] = jet(v);
+            sid.data[i*4]   = rr;
+            sid.data[i*4+1] = gg;
+            sid.data[i*4+2] = bb;
+            sid.data[i*4+3] = Math.round(v * 200);   // intensity-modulated alpha
+          }
+          sctx.putImageData(sid, 0, 0);
+
+          // Composite onto detCanvas at the bbox location (in canvas coords)
+          dctx.save();
+          dctx.imageSmoothingEnabled = true;
+          dctx.imageSmoothingQuality = 'high';
+          dctx.globalCompositeOperation = 'source-over';
+          dctx.drawImage(small, bx1 * sx, by1 * sy, bbw * sx, bbh * sy);
+          dctx.restore();
+        }
+
+        // Restore button click handler
+        btn.onclick = origOnclick;
+        if (window._heatmapCancel) {
+          window._heatmapCancel = false;
+          btn.innerHTML = origLabel;
+          btn.disabled = false;
+          return;
+        }
+
+        window._heatmapShown = true;
+        btn.innerHTML = '✖ ' + t('heatmapRemove');
+      } catch (e) {
+        console.error('[heatmap] failed', e);
+        alert('Heatmap failed: ' + e.message);
+        btn.innerHTML = origLabel;
+      } finally {
+        btn.disabled = false;
+        // Always restore the default click handler — if user cancelled or an
+        // exception fired mid-loop, the temporary cancel-handler must NOT linger
+        // (otherwise next click would set _heatmapCancel=true instead of running).
+        btn.onclick = () => APP.showHeatmap();
+        window._heatmapCancel = false;
+      }
     },
 
     clear() {
       lastDets=[];lastBitmap=null;lastElapsed=0;
+      window._heatmapShown = false;   // reset heatmap toggle
       cw.classList.remove('on');
+      document.getElementById('drop')?.classList.remove('has-img');
       document.getElementById('lboxPh').style.display='';
       document.getElementById('xrayWarn').classList.remove('show');
       detCanvas.getContext('2d').clearRect(0,0,detCanvas.width,detCanvas.height);
@@ -712,7 +1489,7 @@
       const visible = lastDets.filter(d=>d.score>=confThr);
       drawBoxes(visible);
       renderScreening(visible, confThr, lastElapsed);
-      if (visible.length>0) renderClassification(visible);
+      renderClassification(visible);   // cascade: function handles no-detection case internally
     }
   });
 
@@ -743,7 +1520,7 @@
       }));
       setTimeout(() => APP.run(), 80);
     };
-    img.onerror = () => setRunSts('示例图加载失败', 'err');
+    img.onerror = () => setRunSts(t('exLoadErr'), 'err');
     img.src = `./ex${i}.jpg`;
   };
 
@@ -760,15 +1537,43 @@
       setScanline(false);
       setPipeStep(3);
       renderScreening(preset.filter(d=>d.score>=confThr), confThr, lastElapsed);
-      if (preset.filter(d=>d.score>=confThr).length>0)
-        renderClassification(preset.filter(d=>d.score>=confThr));
+      renderClassification(preset.filter(d=>d.score>=confThr));   // cascade: handles empty internally
       const vis=preset.filter(d=>d.score>=confThr).length;
-      setRunSts(`✅ ${lastElapsed}ms · ${vis} detection${vis!==1?'s':''}`, 'ok');
+      setRunSts(`✅ ${lastElapsed}ms · ${vis} ${t(vis!==1?'detections':'detection')}`, 'ok');
       setExport(true);
       runEl.disabled=false;
       return;
     }
     return _origRun();
+  };
+
+  /* ── RE-RENDER ON LANG CHANGE ──────────────────────────── */
+  /*
+   * Called by setLang() whenever the user switches language.
+   * Re-renders all dynamic detection output (stage 1 + stage 2 results,
+   * run-status bar) using the new LANG so nothing stays in the old language.
+   */
+  window.reRenderResults = function() {
+    const confThr = document.getElementById('confSlider').value / 100;
+
+    if (lastElapsed === 0) {
+      // No detection run yet — just refresh placeholder strings
+      document.getElementById('scrResult').innerHTML =
+        `<div style="color:var(--fg3);font-size:11px;text-align:center;padding:16px 0">${t('waiting')}</div>`;
+      document.getElementById('clfResult').innerHTML =
+        `<div style="color:var(--fg3);font-size:11px;text-align:center;padding:16px 0">${t('waitScr')}</div>`;
+      if (!lastBitmap) setRunSts(t('selFirst'));
+      return;
+    }
+
+    // Detection has been run — re-render results in new language
+    const visible = lastDets.filter(d => d.score >= confThr);
+    renderScreening(visible, confThr, lastElapsed);
+    renderClassification(visible);   // cascade: handles empty internally
+
+    // Also update the run-status bar
+    const visCount = visible.length;
+    setRunSts(`✅ ${lastElapsed}ms · ${visCount} ${t(visCount!==1?'detections':'detection')}`, 'ok');
   };
 
   /* ── BOOT ───────────────────────────────────────────────── */

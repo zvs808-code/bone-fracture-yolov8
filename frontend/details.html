@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh" data-lang="zh">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<meta name="description" content="Technical overview — Multi-Task Context-Aware Bone Fracture Diagnostic System."/>
+<meta name="theme-color" content="#07101f"/>
+<title>项目详情 · Bone Fracture Detector</title>
+<style>
+:root{
+  --bg:#07101f;--bg2:#0c1629;--panel:#111b30;
+  --border:#2a3a5a;--border2:#3d5078;
+  --fg:#f0f5ff;--fg2:#b8c5dc;--fg3:#8a9ab5;
+  --accent:#5b9eff;--accent2:#3d85ff;
+  --good:#4ade80;--warn:#fbbf24;--bad:#f87171;
+  --scan:#00d4ff;
+  --r:14px;--rs:8px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+html,body{overscroll-behavior:none}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+  background:var(--bg);color:var(--fg);min-height:100vh;line-height:1.7;
+  padding-top:env(safe-area-inset-top)}
+
+/* NAV */
+nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--border);
+  padding:0 20px;height:54px;display:flex;align-items:center;
+  justify-content:space-between;gap:10px}
+.nav-logo{display:flex;align-items:center;gap:9px;font-size:15px;
+  font-weight:700;color:var(--fg);text-decoration:none}
+.nav-icon{width:32px;height:32px;background:linear-gradient(135deg,#1a5ce5,#00d4ff);
+  border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px}
+.nav-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.lang-grp{display:flex;border:1px solid var(--border2);border-radius:5px;overflow:hidden}
+.lang-btn{padding:4px 8px;font-size:10px;font-weight:700;background:transparent;
+  color:var(--fg2);border:none;cursor:pointer}
+.lang-btn.active{background:var(--accent);color:#fff}
+.nav-lnk{padding:5px 10px;font-size:11px;color:var(--fg2);background:transparent;
+  border:1px solid var(--border2);border-radius:5px;cursor:pointer;text-decoration:none}
+.nav-lnk:hover{color:var(--fg);background:#1a2540}
+.nav-lnk.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.nav-lnk.primary:hover{background:var(--accent2);color:#fff}
+@media (max-width:640px){
+  nav{padding:0 12px;gap:6px}
+  .nav-logo span{font-size:13px}
+  .nav-lnk{padding:4px 7px;font-size:10px}
+}
+
+/* HERO band */
+.hero{background:
+  radial-gradient(60% 80% at 50% 0%, rgba(91,158,255,.18), transparent 70%),
+  linear-gradient(180deg, #0a1428 0%, #07101f 100%);
+  padding:48px 18px 38px;text-align:center;border-bottom:1px solid var(--border)}
+.hero-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;
+  background:rgba(91,158,255,.10);border:1px solid rgba(91,158,255,.30);
+  border-radius:99px;font-size:11px;color:var(--accent);font-weight:600;
+  margin-bottom:16px;letter-spacing:.3px}
+.hero h1{font-size:clamp(24px,4vw,36px);font-weight:800;line-height:1.15;
+  letter-spacing:-.5px;margin-bottom:10px;
+  background:linear-gradient(135deg,#fff 0%,#a5c8ff 50%,#5b9eff 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{font-size:14px;color:var(--fg2);max-width:760px;margin:0 auto;line-height:1.65}
+.hero .author{margin-top:18px;font-size:11px;color:var(--fg3);letter-spacing:.5px}
+
+/* MAIN */
+main{max-width:980px;margin:0 auto;padding:36px 18px 80px}
+section{margin:36px 0;padding-top:8px}
+section > h2{font-size:20px;font-weight:700;color:var(--fg);
+  display:flex;align-items:center;gap:10px;margin-bottom:18px;
+  padding-bottom:10px;border-bottom:1px solid var(--border)}
+section > h2 .num{background:linear-gradient(135deg,var(--accent),var(--scan));
+  color:#fff;width:28px;height:28px;border-radius:50%;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:800;flex-shrink:0}
+section > h2 .em{color:var(--accent);font-size:14px;font-weight:500;
+  margin-left:auto;letter-spacing:.5px}
+p{color:var(--fg2);margin:10px 0;font-size:14px}
+strong{color:var(--fg)}
+code{background:#0c1629;padding:1px 6px;border-radius:4px;font-size:.85em;
+  color:#a5c8ff;border:1px solid var(--border)}
+
+/* Cards & grid */
+.kgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:14px 0}
+.kcard{background:var(--panel);border:1px solid var(--border);border-radius:var(--rs);
+  padding:16px;transition:all .2s}
+.kcard:hover{border-color:var(--accent);transform:translateY(-2px);
+  box-shadow:0 8px 20px rgba(0,0,0,.3)}
+.kcard .kt{font-size:11px;color:var(--fg3);text-transform:uppercase;
+  letter-spacing:.5px;font-weight:600;margin-bottom:6px}
+.kcard .kv{font-size:24px;font-weight:800;color:var(--accent);margin-bottom:4px;
+  font-variant-numeric:tabular-nums}
+.kcard .kd{font-size:12px;color:var(--fg2);line-height:1.5}
+
+/* Architecture diagram */
+.arch{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:18px;margin:18px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12px;color:var(--fg2);line-height:1.9;overflow-x:auto}
+.arch .block{display:inline-block;padding:6px 12px;background:#0c1629;
+  border:1px solid var(--border2);border-radius:6px;color:var(--fg);
+  font-weight:600;margin:2px}
+.arch .accent{border-color:var(--accent);background:rgba(91,158,255,.10);color:var(--accent)}
+.arch .gold{border-color:var(--warn);background:rgba(251,191,36,.10);color:var(--warn)}
+.arch .good{border-color:var(--good);background:rgba(74,222,128,.10);color:var(--good)}
+.arch .arr{color:var(--fg3);margin:0 6px}
+
+/* Pipeline steps */
+.steps{display:flex;flex-direction:column;gap:10px;margin:14px 0}
+.step{display:flex;gap:14px;background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--rs);padding:14px 16px;transition:all .2s;position:relative}
+.step:hover{border-color:var(--accent);transform:translateX(2px)}
+.step .si{width:42px;height:42px;border-radius:50%;
+  background:linear-gradient(135deg,#1a5ce5,#00d4ff);
+  display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.step .sb{flex:1}
+.step .st{font-size:14px;font-weight:700;color:var(--fg);margin-bottom:3px}
+.step .sd{font-size:12px;color:var(--fg2);line-height:1.6}
+.step .sm{font-size:11px;color:var(--fg3);margin-top:6px;
+  display:flex;gap:8px;flex-wrap:wrap}
+.step .sm span{padding:1px 8px;background:#0c1629;border-radius:99px;border:1px solid var(--border)}
+
+/* Pills */
+.pills{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.pill{padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;
+  background:#0c1629;color:var(--fg2);border:1px solid var(--border)}
+.pill.good{background:rgba(74,222,128,.10);color:var(--good);border-color:rgba(74,222,128,.3)}
+.pill.warn{background:rgba(251,191,36,.10);color:var(--warn);border-color:rgba(251,191,36,.3)}
+.pill.acc {background:rgba(91,158,255,.10);color:var(--accent);border-color:rgba(91,158,255,.3)}
+
+/* Rule cards */
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:14px 0}
+.rule{background:var(--panel);border:1px solid var(--border);border-radius:var(--rs);
+  padding:14px;border-left:4px solid var(--accent)}
+.rule.r1{border-left-color:var(--good)}
+.rule.r2{border-left-color:var(--warn)}
+.rule.r3{border-left-color:var(--bad)}
+.rule .rt{font-size:13px;font-weight:700;color:var(--fg);margin-bottom:4px}
+.rule .rs{font-size:11px;color:var(--fg3);margin-bottom:8px;font-family:ui-monospace,monospace}
+.rule .rd{font-size:12px;color:var(--fg2);line-height:1.55}
+
+/* Eval chart grid */
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:14px 0}
+.chart{background:var(--panel);border:1px solid var(--border);border-radius:var(--rs);
+  padding:12px;text-align:center;transition:all .2s}
+.chart:hover{border-color:var(--accent)}
+.chart img{max-width:100%;height:auto;border-radius:4px;background:#fff;padding:4px}
+.chart .ct{font-size:11px;color:var(--fg3);margin-top:8px}
+
+/* Timeline */
+.timeline{position:relative;padding-left:24px;margin:14px 0}
+.timeline::before{content:'';position:absolute;left:7px;top:6px;bottom:6px;
+  width:2px;background:linear-gradient(180deg,var(--accent),var(--border));border-radius:2px}
+.tl-item{position:relative;margin-bottom:18px;padding-left:8px}
+.tl-item::before{content:'';position:absolute;left:-21px;top:6px;
+  width:12px;height:12px;border-radius:50%;background:var(--accent);
+  border:3px solid var(--bg);box-shadow:0 0 0 1px var(--accent)}
+.tl-h{font-size:13px;font-weight:700;color:var(--fg)}
+.tl-m{font-size:11px;color:var(--accent);margin-bottom:3px;letter-spacing:.5px}
+.tl-d{font-size:12px;color:var(--fg2);line-height:1.55}
+
+/* Footer */
+footer{background:#0a0f1e;border-top:1px solid var(--border);padding:22px 18px;
+  text-align:center;font-size:11px;color:var(--fg3);line-height:1.7}
+footer .author-tag{color:var(--fg2);font-weight:600}
+footer .ver{display:inline-block;padding:1px 8px;border-radius:99px;
+  background:#0c1629;border:1px solid var(--border);margin:0 4px;
+  font-family:ui-monospace,monospace;font-size:10px}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a class="nav-logo" href="./">
+    <div class="nav-icon">🦴</div>
+    <span data-i18n="siteTitle">Bone Fracture Detector</span>
+  </a>
+  <div class="nav-right">
+    <div class="lang-grp">
+      <button class="lang-btn" id="lk" onclick="setLang('ko')">한</button>
+      <button class="lang-btn" id="le" onclick="setLang('en')">EN</button>
+      <button class="lang-btn active" id="lz" onclick="setLang('zh')">中</button>
+    </div>
+    <a class="nav-lnk primary" href="./" data-i18n="backToApp">← 返回应用</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge">
+    <span data-i18n="heroTag">📋 Technical Overview · v13-expert</span>
+  </div>
+  <h1 data-i18n="heroTitle">可解释的骨折辅助诊断系统</h1>
+  <p data-i18n="heroSub">
+    YOLOv8 检测 · Multi-Task Context-Aware Net · 临床专家规则
+    <br/>所有计算在浏览器中完成,医学影像永不离开设备
+  </p>
+  <div class="author" data-i18n="authorTag">ZHANG HAO 장호 · 毕业设计 · 2026</div>
+</section>
+
+<main>
+
+<!-- 1. WHAT MAKES THIS DIFFERENT -->
+<section>
+  <h2><span class="num">1</span><span data-i18n="s1h">为什么与众不同</span><span class="em" data-i18n="s1em">— Differentiators</span></h2>
+  <p data-i18n="s1p1">大多数医学影像 AI 项目只输出"是不是骨折 + 类别名"。本系统在四个维度上做了系统性升级:</p>
+
+  <div class="kgrid">
+    <div class="kcard">
+      <div class="kt" data-i18n="k1t">隐私优先</div>
+      <div class="kv">100%</div>
+      <div class="kd" data-i18n="k1d">浏览器内推理,医学影像永不上传。ONNX Runtime Web + WebGPU/WebGL/WASM 三级 fallback。</div>
+    </div>
+    <div class="kcard">
+      <div class="kt" data-i18n="k2t">检测器真实指标</div>
+      <div class="kv">0.82</div>
+      <div class="kd" data-i18n="k2d">box-level mAP50,在多源统一 X 光数据集上训练,有可复现 manifest + 完整审计记录。</div>
+    </div>
+    <div class="kcard">
+      <div class="kt" data-i18n="k3t">多任务分类</div>
+      <div class="kv">3 heads</div>
+      <div class="kd" data-i18n="k3d">同时输出位置 (Shaft/Joint)、方向 (横/斜/纵)、形态学 (移位/粉碎),不是单一类别名。</div>
+    </div>
+    <div class="kcard">
+      <div class="kt" data-i18n="k4t">临床专家规则</div>
+      <div class="kv">4 status</div>
+      <div class="kd" data-i18n="k4d">医学规则 + 状态码 + 风险警示 — 不吐生概率,产出可读的诊断建议。</div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. ARCHITECTURE OVERVIEW -->
+<section>
+  <h2><span class="num">2</span><span data-i18n="s2h">系统架构</span><span class="em" data-i18n="s2em">— Architecture Overview</span></h2>
+  <p data-i18n="s2p1">五步级联流水线,每一步的输出都是下一步的输入。架构图(精简):</p>
+
+  <div class="arch">
+    <div><span class="block">📤 Upload</span> <span class="arr">→</span>
+         <span class="block accent">🔍 YOLOv8 Detector</span> <span class="arr">→</span>
+         <span class="block">📦 Per-box ROI Crop</span></div>
+    <div style="margin-top:14px"><span class="arr" style="margin-right:0">↓</span></div>
+    <div><span class="block accent">🧠 Multi-Task Net</span>
+         <span class="arr">═</span>
+         <span class="block">Siamese EfficientNet-B3</span>
+         <span class="arr">+</span>
+         <span class="block gold">EdgeGuidedAttention</span></div>
+    <div style="margin-top:8px;padding-left:18px;font-size:11px;color:var(--fg3)">
+      <span data-i18n="archHeads">输出 3 个任务头 → </span>
+      <span class="block">📍 Location</span>
+      <span class="block">📐 Direction</span>
+      <span class="block">🔬 Morphology</span>
+    </div>
+    <div style="margin-top:14px"><span class="arr" style="margin-right:0">↓</span></div>
+    <div><span class="block good">⚕ Clinical Expert Rules</span> <span class="arr">→</span>
+         <span class="block">📋 Status Code + Prompt</span> <span class="arr">→</span>
+         <span class="block">📊 PDF · Heatmap · JSON</span></div>
+  </div>
+
+  <p style="margin-top:14px" data-i18n="s2p2">
+    <strong>关键设计:</strong>Siamese 双输入(局部 ROI + 全局上下文)让模型在判断时同时看到病变细节和解剖位置;
+    EdgeGuidedAttention 利用 Sobel 边缘 + 卷积评分,从拓扑学角度门控"粉碎"判定,数学上保证 — 没有独立游离骨片证据,不会盲目报粉碎。
+  </p>
+</section>
+
+<!-- 3. MULTI-TASK NET DETAILS -->
+<section>
+  <h2><span class="num">3</span><span data-i18n="s3h">多任务网络</span><span class="em" data-i18n="s3em">— Multi-Task Net</span></h2>
+
+  <div class="kgrid">
+    <div class="kcard">
+      <div class="kt" data-i18n="m1t">Task 1 — Location</div>
+      <div class="kv">92%</div>
+      <div class="kd" data-i18n="m1d">Shaft (骨干) / Joint (关节) 二分类。从几何上禁止"骨干→关节类"误判(例:Avulsion 不能发生在长骨中段)。</div>
+    </div>
+    <div class="kcard">
+      <div class="kt" data-i18n="m2t">Task 2 — Direction</div>
+      <div class="kv">86%</div>
+      <div class="kd" data-i18n="m2d">Transverse / Oblique / Longitudinal 三分类。让模型显式学习骨折线方向,而不是被纹理特征带跑。</div>
+    </div>
+    <div class="kcard">
+      <div class="kt" data-i18n="m3t">Task 3 — Morphology</div>
+      <div class="kv">2 labels</div>
+      <div class="kd" data-i18n="m3d">[Displaced, Comminuted] 多标签。EdgeGuidedAttention 后处理,只有真有独立闭合骨片时才放行 Comminuted 判定。</div>
+    </div>
+  </div>
+
+  <div class="pills">
+    <span class="pill acc" data-i18n="p1">Siamese Backbone</span>
+    <span class="pill acc" data-i18n="p2">Dual Input (ROI + Global)</span>
+    <span class="pill acc" data-i18n="p3">EdgeGuidedAttention</span>
+    <span class="pill acc" data-i18n="p4">Uncertainty-Weighted Loss</span>
+    <span class="pill acc" data-i18n="p5">Asymmetric Loss (multi-label)</span>
+    <span class="pill good" data-i18n="p6">Post-hoc topology gating</span>
+  </div>
+</section>
+
+<!-- 4. EXPERT SYSTEM -->
+<section>
+  <h2><span class="num">4</span><span data-i18n="s4h">临床专家规则</span><span class="em" data-i18n="s4em">— Expert System</span></h2>
+  <p data-i18n="s4p1">原始模型概率会经过 <strong>3 条医学逻辑规则</strong> 后处理,输出 4 个状态码之一,并附带三语临床决策文案:</p>
+
+  <div class="rules">
+    <div class="rule r1">
+      <div class="rt" data-i18n="r1t">规则 1 · 解剖位置锁定</div>
+      <div class="rs" data-i18n="r1s">Shaft Lock → forbid Avulsion</div>
+      <div class="rd" data-i18n="r1d">当 Location 头极度确定为长骨骨干时,从最终输出中强制移除"撕脱骨折"候选(撕脱发生在肌腱附着点,定义上不在骨干中段)。</div>
+    </div>
+    <div class="rule r2">
+      <div class="rt" data-i18n="r2t">规则 2 · 动态粉碎性阈值</div>
+      <div class="rs" data-i18n="r2s">Dynamic Comminuted bands</div>
+      <div class="rd" data-i18n="r2d">粉碎判定不是单一阈值,而是三段式 — 强证据 → STATUS_COMMINUTED;边界 → STATUS_AMBIGUOUS_WARNING(触发智能警告);弱证据 + 横向主导 → 收敛为横形/斜形。</div>
+    </div>
+    <div class="rule r3">
+      <div class="rt" data-i18n="r3t">规则 3 · 整体置信度地板</div>
+      <div class="rs" data-i18n="r3s">Confidence floor override</div>
+      <div class="rd" data-i18n="r3d">三个任务的最低置信度为整体置信度。低于安全阈值时,即使主诊断明确也降级为 STATUS_LOW_CONFIDENCE,并要求复核。</div>
+    </div>
+  </div>
+
+  <div class="pills" style="margin-top:14px">
+    <span class="pill good">STATUS_CLEAR · 200</span>
+    <span class="pill warn">STATUS_COMMINUTED · 201</span>
+    <span class="pill warn">⚠ STATUS_AMBIGUOUS_WARNING · 202</span>
+    <span class="pill">STATUS_LOW_CONFIDENCE · 203</span>
+  </div>
+</section>
+
+<!-- 5. INFERENCE PIPELINE -->
+<section>
+  <h2><span class="num">5</span><span data-i18n="s5h">五步推理流程</span><span class="em" data-i18n="s5em">— Inference Pipeline</span></h2>
+
+  <div class="steps">
+    <div class="step">
+      <div class="si">📤</div>
+      <div class="sb">
+        <div class="st" data-i18n="step1t">① 上传 X 光片</div>
+        <div class="sd" data-i18n="step1d">支持 JPG / PNG / WebP / BMP / DICOM (.dcm)。客户端 DICOM 解析(dicom-parser),即时显示在 lightbox。</div>
+        <div class="sm"><span>JPG/PNG</span><span>DICOM</span><span>Drag &amp; Drop</span></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="si">🔍</div>
+      <div class="sb">
+        <div class="st" data-i18n="step2t">② YOLOv8m 检测</div>
+        <div class="sd" data-i18n="step2d">检测器在 ROI 上定位骨折区域,输出 bounding box + 置信度。非 X 光图像自动旗标,提示用户。</div>
+        <div class="sm"><span>mAP50 0.82</span><span>96% sensitivity</span><span>NMS</span></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="si">🦴</div>
+      <div class="sb">
+        <div class="st" data-i18n="step3t">③ 每框多任务分类</div>
+        <div class="sd" data-i18n="step3d">对每个检测框单独裁剪(带 padding),同时送入局部 ROI + 全局图,得到位置、方向、形态学三路输出 + EdgeGuidedAttention 注意力图。</div>
+        <div class="sm"><span>Siamese</span><span>EdgeAttention</span><span>Per-box independent</span></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="si">⚕</div>
+      <div class="sb">
+        <div class="st" data-i18n="step4t">④ 专家规则后处理</div>
+        <div class="sd" data-i18n="step4d">3 条临床规则 + 整体置信度地板,生成 STATUS 码 + 中/韩/英三语临床决策文案,直接告诉医师下一步建议。</div>
+        <div class="sm"><span>3 rules</span><span>4 status codes</span><span>tri-lingual</span></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="si">📋</div>
+      <div class="sb">
+        <div class="st" data-i18n="step5t">⑤ 报告导出</div>
+        <div class="sd" data-i18n="step5d">PDF 结构化报告 / 标注图像 / Grad-CAM 风格 occlusion 热力图 / JSON 数据接口(供 ECharts 等可视化)。</div>
+        <div class="sm"><span>PDF</span><span>Heatmap</span><span>JSON</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6. EVALUATION -->
+<section>
+  <h2><span class="num">6</span><span data-i18n="s6h">评估结果</span><span class="em" data-i18n="s6em">— Evaluation</span></h2>
+  <p data-i18n="s6p1">检测器在独立 holdout 测试集上的真实评估(<strong>非自报</strong>,有可复现脚本):</p>
+
+  <div class="charts">
+    <div class="chart">
+      <img src="eval_training_curve.png" alt="Training curve"/>
+      <div class="ct" data-i18n="c1">Training Curve · mAP50 / Loss</div>
+    </div>
+    <div class="chart">
+      <img src="eval_per_class.png" alt="Per-class metrics"/>
+      <div class="ct" data-i18n="c2">Per-class Metrics</div>
+    </div>
+    <div class="chart">
+      <img src="eval_confusion_matrix.png" alt="Confusion matrix"/>
+      <div class="ct" data-i18n="c3">Confusion Matrix · Classifier</div>
+    </div>
+  </div>
+
+  <div class="kgrid" style="margin-top:14px">
+    <div class="kcard">
+      <div class="kt" data-i18n="e1t">Detection · mAP50</div>
+      <div class="kv">0.82</div>
+      <div class="kd" data-i18n="e1d">box-level on holdout · YOLOv8m</div>
+    </div>
+    <div class="kcard">
+      <div class="kt" data-i18n="e2t">Detection · Sensitivity</div>
+      <div class="kv">96%</div>
+      <div class="kd" data-i18n="e2d">image-level @ Youden-optimal</div>
+    </div>
+    <div class="kcard">
+      <div class="kt" data-i18n="e3t">MTL · Location acc</div>
+      <div class="kv">92%</div>
+      <div class="kd" data-i18n="e3d">Shaft / Joint binary</div>
+    </div>
+    <div class="kcard">
+      <div class="kt" data-i18n="e4t">MTL · Direction acc</div>
+      <div class="kv">86%</div>
+      <div class="kd" data-i18n="e4d">Transverse / Oblique / Longitudinal</div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. PROJECT TIMELINE -->
+<section>
+  <h2><span class="num">7</span><span data-i18n="s7h">项目里程碑</span><span class="em" data-i18n="s7em">— Milestones</span></h2>
+  <div class="timeline">
+    <div class="tl-item">
+      <div class="tl-m" data-i18n="tlm1">Phase 1</div>
+      <div class="tl-h" data-i18n="tlh1">基础检测器 + 单分类器原型</div>
+      <div class="tl-d" data-i18n="tld1">YOLOv8 + ImageNet 预训练 EfficientNet,验证端到端可行性。</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-m" data-i18n="tlm2">Phase 2</div>
+      <div class="tl-h" data-i18n="tlh2">浏览器部署 + DICOM 支持</div>
+      <div class="tl-d" data-i18n="tld2">ONNX 导出 + ONNX Runtime Web + 三级后端协商。新增 DICOM 解析。</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-m" data-i18n="tlm3">Phase 3</div>
+      <div class="tl-h" data-i18n="tlh3">数据质量审计 + 多源统一</div>
+      <div class="tl-d" data-i18n="tld3">清洗 + 合并多个公开数据源,可复现 manifest,审计数据泄漏与标签噪点。</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-m" data-i18n="tlm4">Phase 4</div>
+      <div class="tl-h" data-i18n="tlh4">检测器全面重训(HPO)</div>
+      <div class="tl-d" data-i18n="tld4">系统性超参搜索 + warm-start + 多 epoch 评估,mAP50 大幅提升。</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-m" data-i18n="tlm5">Phase 5</div>
+      <div class="tl-h" data-i18n="tlh5">多任务网络架构</div>
+      <div class="tl-d" data-i18n="tld5">Siamese 双输入 + 3 任务头 + EdgeGuidedAttention 拓扑门控 + Uncertainty-Weighted Loss。</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-m" data-i18n="tlm6">Phase 6</div>
+      <div class="tl-h" data-i18n="tlh6">临床专家规则 + 部署</div>
+      <div class="tl-d" data-i18n="tld6">医学规则后处理 + 状态码 + 三语临床文案;FastAPI 参考后端 + 浏览器同源实现。</div>
+    </div>
+  </div>
+</section>
+
+<!-- 8. DEPLOYMENT & PRIVACY -->
+<section>
+  <h2><span class="num">8</span><span data-i18n="s8h">部署与隐私</span><span class="em" data-i18n="s8em">— Deployment &amp; Privacy</span></h2>
+  <p data-i18n="s8p1">
+    模型导出为 <strong>ONNX</strong>,通过 <strong>ONNX Runtime Web</strong> 在浏览器内推理。
+    无服务器、无数据上传、完全端侧。三级后端自动协商:WebGPU → WebGL → WASM。
+  </p>
+  <div class="pills">
+    <span class="pill good">✅ Zero Upload</span>
+    <span class="pill good">✅ Zero Server-side Storage</span>
+    <span class="pill good">✅ Works Offline (after first load)</span>
+    <span class="pill acc">📱 Capacitor → Android/iOS APK</span>
+    <span class="pill acc">🖥 Electron → Desktop</span>
+    <span class="pill acc">🌐 Web → Modern browsers</span>
+  </div>
+  <p data-i18n="s8p2" style="margin-top:14px">
+    <strong>可选 Python 参考后端</strong>:为需要审计日志或 PACS 集成的临床场景提供
+    FastAPI 包装的 ONNX Runtime 推理服务,业务逻辑(专家规则、置信度地板、临床文案)与浏览器端完全一致。
+  </p>
+</section>
+
+<!-- 9. LIMITATIONS -->
+<section>
+  <h2><span class="num">9</span><span data-i18n="s9h">局限与未来工作</span><span class="em" data-i18n="s9em">— Limitations</span></h2>
+  <ul style="color:var(--fg2);padding-left:22px;font-size:14px;line-height:1.85">
+    <li data-i18n="l1"><strong>非医疗器械</strong>:本系统仅供教育和研究演示,不能用于临床诊断。任何决策必须由有资质的放射科医师做出。</li>
+    <li data-i18n="l2"><strong>启发式多任务标签</strong>:位置/方向/形态学标签由原始类别名启发式派生(无放射科医师重新标注),论文级结果需要正式标注。</li>
+    <li data-i18n="l3"><strong>无外部多机构验证</strong>:目前仅在公开数据集 holdout 上评估,跨机构 / 设备 / 患者群体泛化性需进一步研究。</li>
+    <li data-i18n="l4"><strong>形态学 AP 数值偏低</strong>:多标签的 Comminuted/Displaced AP 受 7.6% 类不平衡影响,绝对数值低 — 但 EdgeGuidedAttention 拓扑门控保证不乱报。</li>
+    <li data-i18n="l5"><strong>未来工作</strong>:(1) 放射科医师标注;(2) 多机构外部验证;(3) 三视图 DICOM 整合;(4) 临床工作流集成(PACS、HL7)。</li>
+  </ul>
+</section>
+
+<!-- 10. ACKNOWLEDGMENTS -->
+<section>
+  <h2><span class="num">10</span><span data-i18n="s10h">致谢</span><span class="em" data-i18n="s10em">— Acknowledgments</span></h2>
+  <p data-i18n="s10p1">
+    本项目使用了多个开源工具与公开数据资源。我们感谢
+    <strong>Ultralytics</strong>(YOLOv8 框架)、
+    <strong>Microsoft ONNX Runtime</strong>(浏览器推理)、
+    <strong>PyTorch</strong> / <strong>torchvision</strong>(EfficientNet 骨干)、
+    <strong>FastAPI</strong>(参考后端),
+    以及公开 X 光骨折数据集的贡献者们。
+  </p>
+  <p data-i18n="s10p2" style="font-size:12px;color:var(--fg3);margin-top:10px">
+    数据集出处、详细超参数、训练脚本、模型权重等技术资料未在本页公开,以保护原创性与避免被未授权复制。
+    有学术合作需求请通过正式渠道联系作者。
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <div>⚠️ <span data-i18n="footerWarn">仅供教育和研究 · 非医疗器械 · 请勿用于临床诊断</span></div>
+  <div style="margin-top:8px">
+    <span class="author-tag">ZHANG HAO 장호</span> ·
+    <span class="ver">v13-expert</span> ·
+    <span class="ver">on-device</span> ·
+    <span>© 2026</span>
+  </div>
+</footer>
+
+<script>
+const I18N = {
+  ko:{
+    siteTitle:'골절 탐지기', backToApp:'← 앱으로',
+    heroTag:'📋 기술 개요 · v13-expert',
+    heroTitle:'설명 가능한 골절 보조 진단 시스템',
+    heroSub:'YOLOv8 검출 · Multi-Task Context-Aware Net · 임상 전문가 규칙<br/>모든 계산이 브라우저에서, 의료 영상은 기기를 떠나지 않습니다',
+    authorTag:'ZHANG HAO 장호 · 졸업 프로젝트 · 2026',
+    s1h:'무엇이 다른가', s1em:'— Differentiators',
+    s1p1:'대부분의 의료 영상 AI는 "골절 여부 + 카테고리" 만 출력합니다. 본 시스템은 네 가지 차원에서 체계적으로 업그레이드:',
+    k1t:'프라이버시 우선', k1d:'브라우저 내 추론, 의료 영상 절대 업로드 없음. ONNX Runtime Web + WebGPU/WebGL/WASM 3단계 fallback.',
+    k2t:'검출기 실증 지표', k2d:'box-level mAP50, 다중 출처 통합 X-ray 데이터셋에서 학습, 재현 가능 manifest + 완전한 감사 기록.',
+    k3t:'다중작업 분류', k3d:'위치(Shaft/Joint)·방향(횡/사/종)·형태학(전위/분쇄) 동시 출력, 단일 클래스명 아님.',
+    k4t:'임상 전문가 규칙', k4d:'의학 규칙 + 상태 코드 + 위험 경고 — 생확률 대신 읽기 쉬운 진단 제안.',
+    s2h:'시스템 아키텍처', s2em:'— Architecture',
+    s2p1:'5단계 케스케이드 파이프라인, 각 단계의 출력이 다음 단계의 입력. 간소화된 아키텍처 다이어그램:',
+    archHeads:'3개 태스크 헤드 출력 → ',
+    s2p2:'<strong>핵심 설계:</strong> Siamese 듀얼 입력(국부 ROI + 전역 컨텍스트)으로 모델은 병변 디테일과 해부학적 위치를 동시에 봄. EdgeGuidedAttention은 Sobel 엣지 + Conv 점수로 "분쇄" 판정을 위상학적으로 게이팅 — 독립 골편 증거 없이는 분쇄 판정 불가.',
+    s3h:'다중작업 네트워크', s3em:'— Multi-Task Net',
+    m1t:'태스크 1 — 위치', m1d:'Shaft(골간) / Joint(관절부) 이진 분류. 기하학적으로 "골간→관절류" 오판 차단(예: 견열은 골간 중부에서 발생 불가).',
+    m2t:'태스크 2 — 방향', m2d:'횡상/사상/종상 3분류. 모델이 골절선 방향을 명시적으로 학습, 텍스처에 휘둘리지 않음.',
+    m3t:'태스크 3 — 형태학', m3d:'[전위, 분쇄] 다중 라벨. EdgeGuidedAttention 후처리로 진짜 독립 폐곡 골편이 있을 때만 분쇄 통과.',
+    s4h:'임상 전문가 규칙', s4em:'— Expert System',
+    s4p1:'원본 모델 확률은 <strong>3가지 의학 논리 규칙</strong> 후처리를 거쳐 4가지 상태 코드 중 하나 + 3개국어 임상 결정 문구를 출력:',
+    r1t:'규칙 1 · 해부학적 위치 잠금', r1s:'Shaft Lock → forbid Avulsion', r1d:'위치 헤드가 장골 골간으로 매우 확실할 때, 최종 출력에서 "견열 골절" 후보 강제 제거.',
+    r2t:'규칙 2 · 동적 분쇄성 임계값', r2s:'Dynamic Comminuted bands', r2d:'분쇄 판정은 단일 임계값이 아닌 3단계 — 강한 증거 → STATUS_COMMINUTED; 경계 → STATUS_AMBIGUOUS_WARNING; 약함+횡상 주도 → 횡상/사상으로 수렴.',
+    r3t:'규칙 3 · 전체 신뢰도 바닥', r3s:'Confidence floor override', r3d:'3개 태스크 최저 신뢰도가 전체 신뢰도. 안전 임계값 미만 시 명확 진단도 STATUS_LOW_CONFIDENCE로 격하.',
+    s5h:'5단계 추론 흐름', s5em:'— Inference Pipeline',
+    step1t:'① X-ray 업로드', step1d:'JPG/PNG/WebP/BMP/DICOM 지원. 클라이언트 측 DICOM 파싱, lightbox 즉시 표시.',
+    step2t:'② YOLOv8m 검출', step2d:'검출기가 골절 영역 위치 측정, bbox + 신뢰도 출력. 비 X-ray 이미지 자동 플래그.',
+    step3t:'③ 영역별 다중작업 분류', step3d:'각 검출 영역 독립 크롭(패딩 포함), 국부 ROI + 전역 이미지 동시 입력, 3개 출력 + 주의 맵.',
+    step4t:'④ 전문가 규칙 후처리', step4d:'3가지 임상 규칙 + 전체 신뢰도 바닥, STATUS 코드 + 한/중/영 임상 결정 문구 생성.',
+    step5t:'⑤ 리포트 내보내기', step5d:'PDF 구조화 리포트 / 주석 이미지 / Grad-CAM 스타일 히트맵 / JSON 데이터.',
+    s6h:'평가 결과', s6em:'— Evaluation',
+    s6p1:'독립 holdout 테스트셋에서 검출기 실제 평가(<strong>자기 보고 아님</strong>, 재현 가능 스크립트 포함):',
+    c1:'학습 곡선 · mAP50 / Loss', c2:'클래스별 지표', c3:'혼동 행렬 · 분류기',
+    e1t:'검출 · mAP50', e1d:'holdout box-level · YOLOv8m',
+    e2t:'검출 · 민감도', e2d:'image-level @ Youden 최적',
+    e3t:'MTL · 위치 acc', e3d:'Shaft / Joint 이진',
+    e4t:'MTL · 방향 acc', e4d:'횡상 / 사상 / 종상',
+    s7h:'프로젝트 이정표', s7em:'— Milestones',
+    tlm1:'단계 1', tlh1:'기본 검출기 + 단일 분류기 프로토타입', tld1:'YOLOv8 + ImageNet 사전학습 EfficientNet, 종단간 실현 가능성 검증.',
+    tlm2:'단계 2', tlh2:'브라우저 배포 + DICOM 지원', tld2:'ONNX 내보내기 + ONNX Runtime Web + 3단계 백엔드. DICOM 파싱 추가.',
+    tlm3:'단계 3', tlh3:'데이터 품질 감사 + 다중 출처 통합', tld3:'정제 + 다중 공개 데이터셋 병합, 재현 가능 manifest, 누수와 라벨 노이즈 감사.',
+    tlm4:'단계 4', tlh4:'검출기 전면 재학습 (HPO)', tld4:'체계적 하이퍼파라미터 탐색 + warm-start + 다중 epoch 평가, mAP50 대폭 향상.',
+    tlm5:'단계 5', tlh5:'다중작업 네트워크 아키텍처', tld5:'Siamese 듀얼 입력 + 3 태스크 헤드 + EdgeGuidedAttention + Uncertainty-Weighted Loss.',
+    tlm6:'단계 6', tlh6:'임상 전문가 규칙 + 배포', tld6:'의학 규칙 후처리 + 상태 코드 + 3개국어 임상 문구; FastAPI 참조 + 브라우저 동일 구현.',
+    s8h:'배포 및 프라이버시', s8em:'— Deployment & Privacy',
+    s8p1:'모델은 <strong>ONNX</strong>로 내보내고 <strong>ONNX Runtime Web</strong>으로 브라우저 내 추론. 서버 없음, 업로드 없음, 완전 온디바이스. 3단계 백엔드 자동 협상: WebGPU → WebGL → WASM.',
+    s8p2:'<strong>선택적 Python 참조 백엔드</strong>: 감사 로깅이나 PACS 통합이 필요한 임상 시나리오를 위한 FastAPI 래핑 ONNX Runtime 추론 서비스, 비즈니스 로직(전문가 규칙, 신뢰도 바닥, 임상 문구)은 브라우저와 완전 동일.',
+    s9h:'한계 및 향후 작업', s9em:'— Limitations',
+    l1:'<strong>의료 기기 아님</strong>: 본 시스템은 교육 및 연구 시연 전용, 임상 진단 금지. 모든 결정은 자격을 갖춘 영상의학 전문의가 해야 함.',
+    l2:'<strong>휴리스틱 다중작업 라벨</strong>: 위치/방향/형태학 라벨은 원본 클래스명에서 휴리스틱 파생(영상의학 전문의 재라벨링 없음). 논문 수준 결과는 정식 라벨링 필요.',
+    l3:'<strong>외부 다기관 검증 없음</strong>: 현재 공개 데이터셋 holdout 평가만, 다기관/장비/환자군 일반화는 추가 연구 필요.',
+    l4:'<strong>형태학 AP 수치 낮음</strong>: 다중 라벨 Comminuted/Displaced AP는 7.6% 클래스 불균형으로 절대값 낮음 — 그러나 EdgeGuidedAttention 위상 게이팅이 거짓 양성 방지.',
+    l5:'<strong>향후 작업</strong>: (1) 영상의학 전문의 라벨링; (2) 다기관 외부 검증; (3) 3-view DICOM 통합; (4) 임상 워크플로 통합(PACS, HL7).',
+    s10h:'감사의 말', s10em:'— Acknowledgments',
+    s10p1:'본 프로젝트는 여러 오픈 소스 도구와 공개 데이터 자원을 사용했습니다. <strong>Ultralytics</strong>(YOLOv8), <strong>Microsoft ONNX Runtime</strong>(브라우저 추론), <strong>PyTorch</strong>/<strong>torchvision</strong>(EfficientNet), <strong>FastAPI</strong>(참조 백엔드), 그리고 공개 X-ray 골절 데이터셋 기여자들에게 감사드립니다.',
+    s10p2:'데이터셋 출처, 상세 하이퍼파라미터, 학습 스크립트, 모델 가중치 등 기술 자료는 독창성 보호와 무단 복제 방지를 위해 본 페이지에 공개하지 않습니다. 학술 협력이 필요하시면 공식 채널로 저자에게 연락 바랍니다.',
+    footerWarn:'교육 및 연구 전용 · 의료 기기 아님 · 임상 진단 금지',
+  },
+  en:{
+    siteTitle:'Bone Fracture Detector', backToApp:'← Back to App',
+    heroTag:'📋 Technical Overview · v13-expert',
+    heroTitle:'Explainable Fracture-Assistance Diagnostic System',
+    heroSub:'YOLOv8 Detection · Multi-Task Context-Aware Net · Clinical Expert Rules<br/>All computation runs in your browser — medical images never leave your device',
+    authorTag:'ZHANG HAO 장호 · Graduation Project · 2026',
+    s1h:'What Makes This Different', s1em:'— Differentiators',
+    s1p1:'Most medical AI projects only output "fracture? category?". This system upgrades four dimensions:',
+    k1t:'Privacy First', k1d:'In-browser inference. Medical images are never uploaded. ONNX Runtime Web + WebGPU/WebGL/WASM tri-level fallback.',
+    k2t:'Real Detector Metrics', k2d:'Box-level mAP50, trained on a multi-source unified X-ray dataset with reproducible manifest and full audit trail.',
+    k3t:'Multi-Task Classification', k3d:'Simultaneous Location (Shaft/Joint), Direction (Trans/Obli/Long), Morphology (Displaced/Comminuted) — not a single category name.',
+    k4t:'Clinical Expert Rules', k4d:'Medical rules + status codes + risk warnings — not raw probabilities, but readable clinical recommendations.',
+    s2h:'System Architecture', s2em:'— Architecture',
+    s2p1:'5-step cascade pipeline; each stage feeds the next. Simplified architecture diagram:',
+    archHeads:'3 task heads → ',
+    s2p2:'<strong>Key design:</strong> Siamese dual-input (local ROI + global context) lets the model see lesion detail AND anatomical location simultaneously. EdgeGuidedAttention uses Sobel edges + a small conv scorer to topologically gate the Comminuted decision — math guarantees no Comminuted firing without independent fragment evidence.',
+    s3h:'Multi-Task Network', s3em:'— Multi-Task Net',
+    m1t:'Task 1 — Location', m1d:'Shaft / Joint binary. Geometrically blocks "shaft → joint-type" misclassifications (e.g. Avulsion cannot occur mid-shaft).',
+    m2t:'Task 2 — Direction', m2d:'Transverse / Oblique / Longitudinal 3-class. Makes the model explicitly learn fracture-line direction, not just texture cues.',
+    m3t:'Task 3 — Morphology', m3d:'[Displaced, Comminuted] multi-label. Post-processed by EdgeGuidedAttention — only fires Comminuted when real independent closed fragments are present.',
+    s4h:'Clinical Expert Rules', s4em:'— Expert System',
+    s4p1:'Raw model probabilities are post-processed by <strong>3 medical-logic rules</strong> into one of 4 status codes plus tri-lingual clinical decision prompts:',
+    r1t:'Rule 1 · Anatomical Lock', r1s:'Shaft Lock → forbid Avulsion', r1d:'When the Location head is highly confident on diaphysis, the "Avulsion" candidate is forcibly removed from the final output.',
+    r2t:'Rule 2 · Dynamic Comminuted Bands', r2s:'Dynamic Comminuted bands', r2d:'Comminuted decision is not a single threshold but three bands — strong → STATUS_COMMINUTED; boundary → STATUS_AMBIGUOUS_WARNING; weak + transverse-leading → collapse to Transverse/Oblique.',
+    r3t:'Rule 3 · Overall Confidence Floor', r3s:'Confidence floor override', r3d:'The minimum confidence across all three tasks is the overall confidence. Below the safety floor, even a clear diagnosis is demoted to STATUS_LOW_CONFIDENCE and review is required.',
+    s5h:'5-Step Inference Pipeline', s5em:'— Inference Pipeline',
+    step1t:'① Upload X-ray', step1d:'Supports JPG / PNG / WebP / BMP / DICOM (.dcm). Client-side DICOM parsing, instant lightbox display.',
+    step2t:'② YOLOv8m Detection', step2d:'Detector localizes fracture regions, outputs bbox + confidence. Non-X-ray images are auto-flagged.',
+    step3t:'③ Per-box Multi-Task Classification', step3d:'Each detection is independently cropped (with padding); local ROI + global image fed simultaneously; 3 task outputs + attention map.',
+    step4t:'④ Expert Rules Post-processing', step4d:'3 clinical rules + confidence floor; generates STATUS code + ko/zh/en clinical decision prompt.',
+    step5t:'⑤ Report Export', step5d:'PDF structured report / annotated image / Grad-CAM-style occlusion heatmap / JSON data.',
+    s6h:'Evaluation Results', s6em:'— Evaluation',
+    s6p1:'Real evaluation on an independent holdout test set (<strong>not self-reported</strong>, reproducible scripts):',
+    c1:'Training Curve · mAP50 / Loss', c2:'Per-class Metrics', c3:'Confusion Matrix · Classifier',
+    e1t:'Detection · mAP50', e1d:'box-level holdout · YOLOv8m',
+    e2t:'Detection · Sensitivity', e2d:'image-level @ Youden-optimal',
+    e3t:'MTL · Location acc', e3d:'Shaft / Joint binary',
+    e4t:'MTL · Direction acc', e4d:'Transverse / Oblique / Longitudinal',
+    s7h:'Project Milestones', s7em:'— Milestones',
+    tlm1:'Phase 1', tlh1:'Baseline detector + single classifier prototype', tld1:'YOLOv8 + ImageNet-pretrained EfficientNet, validated end-to-end feasibility.',
+    tlm2:'Phase 2', tlh2:'Browser deployment + DICOM support', tld2:'ONNX export + ONNX Runtime Web + tri-level backend negotiation. Added DICOM parsing.',
+    tlm3:'Phase 3', tlh3:'Data-quality audit + multi-source unification', tld3:'Cleaned and merged multiple public sources, reproducible manifest, leak and label-noise audits.',
+    tlm4:'Phase 4', tlh4:'Detector full retrain (HPO)', tld4:'Systematic hyperparameter search + warm-start + multi-epoch evaluation, mAP50 significantly improved.',
+    tlm5:'Phase 5', tlh5:'Multi-task network architecture', tld5:'Siamese dual-input + 3 task heads + EdgeGuidedAttention + Uncertainty-Weighted Loss.',
+    tlm6:'Phase 6', tlh6:'Clinical expert rules + deployment', tld6:'Medical-rule post-processing + status codes + tri-lingual clinical prompts; FastAPI reference + browser-side identical implementation.',
+    s8h:'Deployment & Privacy', s8em:'— Deployment & Privacy',
+    s8p1:'Models exported as <strong>ONNX</strong> and inferred in-browser via <strong>ONNX Runtime Web</strong>. No server, no upload, fully on-device. Tri-level backend auto-negotiation: WebGPU → WebGL → WASM.',
+    s8p2:'<strong>Optional Python reference backend</strong>: FastAPI-wrapped ONNX Runtime service for clinical scenarios requiring audit logging or PACS integration. The business logic (expert rules, confidence floor, clinical prompts) is identical to the browser side.',
+    s9h:'Limitations & Future Work', s9em:'— Limitations',
+    l1:'<strong>Not a medical device</strong>: For educational and research demonstration only. Any clinical decisions must be made by a qualified radiologist.',
+    l2:'<strong>Heuristic multi-task labels</strong>: Location/Direction/Morphology labels are heuristically derived from original category names (no radiologist re-labeling). Paper-grade results require formal annotation.',
+    l3:'<strong>No external multi-institutional validation</strong>: Only holdout on public datasets so far; generalization across institutions/scanners/populations needs further study.',
+    l4:'<strong>Morphology AP numerically low</strong>: Multi-label Comminuted/Displaced AP is depressed by the 7.6% class imbalance — but EdgeGuidedAttention topology gating prevents false-positive firings.',
+    l5:'<strong>Future work</strong>: (1) Radiologist labeling; (2) Multi-institutional external validation; (3) Three-view DICOM integration; (4) Clinical workflow (PACS, HL7) integration.',
+    s10h:'Acknowledgments', s10em:'— Acknowledgments',
+    s10p1:'This project uses several open-source tools and public data resources. We thank <strong>Ultralytics</strong> (YOLOv8), <strong>Microsoft ONNX Runtime</strong> (browser inference), <strong>PyTorch</strong>/<strong>torchvision</strong> (EfficientNet backbone), <strong>FastAPI</strong> (reference backend), and contributors to public X-ray fracture datasets.',
+    s10p2:'Dataset provenance, detailed hyperparameters, training scripts, and model weights are intentionally not published on this page, to protect originality and discourage unauthorized cloning. For academic collaboration, please contact the author through formal channels.',
+    footerWarn:'Educational & research use only · Not a medical device · Do not use for clinical diagnosis',
+  },
+  zh:{
+    siteTitle:'骨折检测器', backToApp:'← 返回应用',
+    heroTag:'📋 技术概览 · v13-expert',
+    heroTitle:'可解释的骨折辅助诊断系统',
+    heroSub:'YOLOv8 检测 · Multi-Task Context-Aware Net · 临床专家规则<br/>所有计算在浏览器中完成,医学影像永不离开设备',
+    authorTag:'ZHANG HAO 장호 · 毕业设计 · 2026',
+    s1h:'为什么与众不同', s1em:'— Differentiators',
+    s1p1:'大多数医学影像 AI 项目只输出"是不是骨折 + 类别名"。本系统在四个维度上做了系统性升级:',
+    k1t:'隐私优先', k1d:'浏览器内推理,医学影像永不上传。ONNX Runtime Web + WebGPU/WebGL/WASM 三级 fallback。',
+    k2t:'检测器真实指标', k2d:'box-level mAP50,在多源统一 X 光数据集上训练,有可复现 manifest + 完整审计记录。',
+    k3t:'多任务分类', k3d:'同时输出位置 (Shaft/Joint)、方向 (横/斜/纵)、形态学 (移位/粉碎),不是单一类别名。',
+    k4t:'临床专家规则', k4d:'医学规则 + 状态码 + 风险警示 — 不吐生概率,产出可读的诊断建议。',
+    s2h:'系统架构', s2em:'— Architecture',
+    s2p1:'五步级联流水线,每一步的输出都是下一步的输入。架构图(精简):',
+    archHeads:'输出 3 个任务头 → ',
+    s2p2:'<strong>关键设计:</strong>Siamese 双输入(局部 ROI + 全局上下文)让模型在判断时同时看到病变细节和解剖位置;EdgeGuidedAttention 利用 Sobel 边缘 + 卷积评分,从拓扑学角度门控"粉碎"判定 — 数学上保证,没有独立游离骨片证据,不会盲目报粉碎。',
+    s3h:'多任务网络', s3em:'— Multi-Task Net',
+    m1t:'Task 1 — Location', m1d:'Shaft(骨干)/ Joint(关节)二分类。从几何上禁止"骨干→关节类"误判(例:Avulsion 不能发生在长骨中段)。',
+    m2t:'Task 2 — Direction', m2d:'Transverse / Oblique / Longitudinal 三分类。让模型显式学习骨折线方向,而不是被纹理特征带跑。',
+    m3t:'Task 3 — Morphology', m3d:'[Displaced, Comminuted] 多标签。EdgeGuidedAttention 后处理,只有真有独立闭合骨片时才放行 Comminuted 判定。',
+    s4h:'临床专家规则', s4em:'— Expert System',
+    s4p1:'原始模型概率会经过 <strong>3 条医学逻辑规则</strong> 后处理,输出 4 个状态码之一,并附带三语临床决策文案:',
+    r1t:'规则 1 · 解剖位置锁定', r1s:'Shaft Lock → forbid Avulsion', r1d:'当 Location 头极度确定为长骨骨干时,从最终输出中强制移除"撕脱骨折"候选(撕脱发生在肌腱附着点,定义上不在骨干中段)。',
+    r2t:'规则 2 · 动态粉碎性阈值', r2s:'Dynamic Comminuted bands', r2d:'粉碎判定不是单一阈值,而是三段式 — 强证据 → STATUS_COMMINUTED;边界 → STATUS_AMBIGUOUS_WARNING(触发智能警告);弱证据 + 横向主导 → 收敛为横形/斜形。',
+    r3t:'规则 3 · 整体置信度地板', r3s:'Confidence floor override', r3d:'三个任务的最低置信度为整体置信度。低于安全阈值时,即使主诊断明确也降级为 STATUS_LOW_CONFIDENCE,并要求复核。',
+    s5h:'五步推理流程', s5em:'— Inference Pipeline',
+    step1t:'① 上传 X 光片', step1d:'支持 JPG / PNG / WebP / BMP / DICOM (.dcm)。客户端 DICOM 解析(dicom-parser),即时显示在 lightbox。',
+    step2t:'② YOLOv8m 检测', step2d:'检测器在 ROI 上定位骨折区域,输出 bounding box + 置信度。非 X 光图像自动旗标,提示用户。',
+    step3t:'③ 每框多任务分类', step3d:'对每个检测框单独裁剪(带 padding),同时送入局部 ROI + 全局图,得到位置、方向、形态学三路输出 + EdgeGuidedAttention 注意力图。',
+    step4t:'④ 专家规则后处理', step4d:'3 条临床规则 + 整体置信度地板,生成 STATUS 码 + 中/韩/英三语临床决策文案,直接告诉医师下一步建议。',
+    step5t:'⑤ 报告导出', step5d:'PDF 结构化报告 / 标注图像 / Grad-CAM 风格 occlusion 热力图 / JSON 数据接口(供 ECharts 等可视化)。',
+    s6h:'评估结果', s6em:'— Evaluation',
+    s6p1:'检测器在独立 holdout 测试集上的真实评估(<strong>非自报</strong>,有可复现脚本):',
+    c1:'训练曲线 · mAP50 / Loss', c2:'各类指标', c3:'混淆矩阵 · 分类器',
+    e1t:'检测 · mAP50', e1d:'holdout box-level · YOLOv8m',
+    e2t:'检测 · 灵敏度', e2d:'image-level @ Youden 最优',
+    e3t:'MTL · 位置 acc', e3d:'Shaft / Joint 二分类',
+    e4t:'MTL · 方向 acc', e4d:'横形 / 斜形 / 纵形',
+    s7h:'项目里程碑', s7em:'— Milestones',
+    tlm1:'阶段 1', tlh1:'基础检测器 + 单分类器原型', tld1:'YOLOv8 + ImageNet 预训练 EfficientNet,验证端到端可行性。',
+    tlm2:'阶段 2', tlh2:'浏览器部署 + DICOM 支持', tld2:'ONNX 导出 + ONNX Runtime Web + 三级后端协商。新增 DICOM 解析。',
+    tlm3:'阶段 3', tlh3:'数据质量审计 + 多源统一', tld3:'清洗 + 合并多个公开数据源,可复现 manifest,审计数据泄漏与标签噪点。',
+    tlm4:'阶段 4', tlh4:'检测器全面重训(HPO)', tld4:'系统性超参搜索 + warm-start + 多 epoch 评估,mAP50 大幅提升。',
+    tlm5:'阶段 5', tlh5:'多任务网络架构', tld5:'Siamese 双输入 + 3 任务头 + EdgeGuidedAttention 拓扑门控 + Uncertainty-Weighted Loss。',
+    tlm6:'阶段 6', tlh6:'临床专家规则 + 部署', tld6:'医学规则后处理 + 状态码 + 三语临床文案;FastAPI 参考后端 + 浏览器同源实现。',
+    s8h:'部署与隐私', s8em:'— Deployment & Privacy',
+    s8p1:'模型导出为 <strong>ONNX</strong>,通过 <strong>ONNX Runtime Web</strong> 在浏览器内推理。无服务器、无数据上传、完全端侧。三级后端自动协商:WebGPU → WebGL → WASM。',
+    s8p2:'<strong>可选 Python 参考后端</strong>:为需要审计日志或 PACS 集成的临床场景提供 FastAPI 包装的 ONNX Runtime 推理服务,业务逻辑(专家规则、置信度地板、临床文案)与浏览器端完全一致。',
+    s9h:'局限与未来工作', s9em:'— Limitations',
+    l1:'<strong>非医疗器械</strong>:本系统仅供教育和研究演示,不能用于临床诊断。任何决策必须由有资质的放射科医师做出。',
+    l2:'<strong>启发式多任务标签</strong>:位置/方向/形态学标签由原始类别名启发式派生(无放射科医师重新标注),论文级结果需要正式标注。',
+    l3:'<strong>无外部多机构验证</strong>:目前仅在公开数据集 holdout 上评估,跨机构 / 设备 / 患者群体泛化性需进一步研究。',
+    l4:'<strong>形态学 AP 数值偏低</strong>:多标签的 Comminuted/Displaced AP 受 7.6% 类不平衡影响,绝对数值低 — 但 EdgeGuidedAttention 拓扑门控保证不乱报。',
+    l5:'<strong>未来工作</strong>:(1)放射科医师标注;(2)多机构外部验证;(3)三视图 DICOM 整合;(4)临床工作流集成(PACS、HL7)。',
+    s10h:'致谢', s10em:'— Acknowledgments',
+    s10p1:'本项目使用了多个开源工具与公开数据资源。我们感谢 <strong>Ultralytics</strong>(YOLOv8 框架)、<strong>Microsoft ONNX Runtime</strong>(浏览器推理)、<strong>PyTorch</strong>/<strong>torchvision</strong>(EfficientNet 骨干)、<strong>FastAPI</strong>(参考后端),以及公开 X 光骨折数据集的贡献者们。',
+    s10p2:'数据集出处、详细超参数、训练脚本、模型权重等技术资料未在本页公开,以保护原创性与避免被未授权复制。有学术合作需求请通过正式渠道联系作者。',
+    footerWarn:'仅供教育和研究 · 非医疗器械 · 请勿用于临床诊断',
+  },
+};
+
+function setLang(l){
+  localStorage.setItem('bfd_lang', l);
+  document.documentElement.lang = (l === 'ko' ? 'ko' : (l === 'en' ? 'en' : 'zh'));
+  document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(l === 'ko' ? 'lk' : l === 'en' ? 'le' : 'lz')?.classList.add('active');
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    const v = (I18N[l] || {})[k] || (I18N.en || {})[k];
+    if (v != null) el.innerHTML = v;
+  });
+}
+setLang(localStorage.getItem('bfd_lang') || 'zh');
+</script>
+</body>
+</html>
