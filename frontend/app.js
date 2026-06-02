@@ -56,7 +56,7 @@
     'https://media.githubusercontent.com/media/zvs808-code/bone-fracture-yolov8/main/frontend/model_full.onnx',
   ];
   const FULL_MODEL_CACHE_KEY = 'full-v3';
-  const LITE_MODEL_PATH = '/model.onnx';
+  const LITE_MODEL_PATH = 'https://media.githubusercontent.com/media/zvs808-code/bone-fracture-yolov8/main/frontend/model.onnx';
   const LITE_MODEL_FALLBACK = './model.onnx';
   const IDB_NAME = 'fracture-models-v1';
 
