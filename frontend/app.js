@@ -10,6 +10,30 @@
 (() => {
   'use strict';
 
+  /** Bump when deploying — clears stale JS/model caches once per browser. */
+  const APP_CACHE_REV = '2026-06-01-mtl-blue';
+  const APP_CACHE_KEY = 'bone_app_cache_rev';
+
+  async function purgeStaleClientCache() {
+    if (localStorage.getItem(APP_CACHE_KEY) === APP_CACHE_REV) return;
+    try {
+      await new Promise((res, rej) => {
+        const req = indexedDB.deleteDatabase('fracture-models-v1');
+        req.onsuccess = () => res();
+        req.onerror = () => rej(req.error);
+        req.onblocked = () => res();
+      });
+    } catch (e) { console.warn('[cache] IDB purge', e); }
+    localStorage.setItem(APP_CACHE_KEY, APP_CACHE_REV);
+    if ('caches' in window) {
+      try {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      } catch (e) { console.warn('[cache] SW caches', e); }
+    }
+    console.info('[cache] Cleared model + cache storage for', APP_CACHE_REV);
+  }
+
   const COLORS = ['#22c55e','#3b82f6','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16'];
 
   /* ── STATE ─────────────────────────────────────────────── */
@@ -23,9 +47,20 @@
   let lastElapsed  = 0;
   let lastIsXray   = true;   // basic-image-check result of the current image (OOD gating)
 
-  const FULL_MODEL_URL  = 'https://media.githubusercontent.com/media/zvs808-code/bone-fracture-yolov8/main/frontend/model_full.onnx';
-  const LITE_MODEL_PATH = './model.onnx';
+  /** Static hosting paths (root-relative; no "public/" prefix). Tried in order. */
+  const FULL_MODEL_CANDIDATES = [
+    '/model_full.onnx',
+    '/models/model_full.onnx',
+    '/models/yolov8m.onnx',
+    'https://github.com/zvs808-code/bone-fracture-yolov8/releases/download/v1.0.0/model_full.onnx',
+    'https://media.githubusercontent.com/media/zvs808-code/bone-fracture-yolov8/main/frontend/model_full.onnx',
+  ];
+  const FULL_MODEL_CACHE_KEY = 'full-v3';
+  const LITE_MODEL_PATH = '/model.onnx';
+  const LITE_MODEL_FALLBACK = './model.onnx';
   const IDB_NAME = 'fracture-models-v1';
+
+  let isModelLoading = false;
 
   /* ── IndexedDB cache ────────────────────────────────────── */
   function idbOpen() {
@@ -58,6 +93,86 @@
     } catch { /* ignore cache errors */ }
   }
 
+  function resolveModelUrl(path) {
+    return new URL(path, document.baseURI || window.location.href).href;
+  }
+
+  async function loadModelBytesFromCandidates(paths, cacheKey, onProgress) {
+    const tried = [];
+    for (const path of paths) {
+      try {
+        return await loadModelBytes(resolveModelUrl(path), cacheKey, onProgress);
+      } catch (e) {
+        const msg = (e && e.message) || String(e);
+        tried.push(`${path} (${msg})`);
+        console.warn('[model] load failed:', path, msg);
+      }
+    }
+    throw new Error(
+      'YOLOv8m model not found. Place model_full.onnx in www/ or www/models/yolov8m.onnx.\n' +
+      tried.join('\n')
+    );
+  }
+
+  function modelLoadCopy() {
+    if (LANG === 'zh') {
+      return {
+        title: '正在加载高精度医疗大脑 (YOLOv8m · 99MB)',
+        sub: '首次下载需要 5–15 秒，请稍候…',
+        compile: '正在编译 ONNX 会话…',
+      };
+    }
+    if (LANG === 'ko') {
+      return {
+        title: '고정밀 의료 모델 로딩 중 (YOLOv8m · 99MB)',
+        sub: '첫 다운로드는 5–15초 걸릴 수 있습니다…',
+        compile: 'ONNX 세션 컴파일 중…',
+      };
+    }
+    return {
+      title: 'Loading high-precision model (YOLOv8m · 99MB)',
+      sub: 'First download may take 5–15 seconds…',
+      compile: 'Compiling ONNX session…',
+    };
+  }
+
+  function setModelLoading(on, opts = {}) {
+    isModelLoading = !!on;
+    const overlay = document.getElementById('modelLoadOverlay');
+    if (!overlay) return;
+    if (!on) {
+      overlay.hidden = true;
+      overlay.setAttribute('aria-hidden', 'true');
+      return;
+    }
+    const copy = modelLoadCopy();
+    overlay.hidden = false;
+    overlay.setAttribute('aria-hidden', 'false');
+    const titleEl = document.getElementById('modelLoadTitle');
+    const subEl = document.getElementById('modelLoadSub');
+    const pctEl = document.getElementById('modelLoadPct');
+    const fillEl = document.getElementById('modelLoadBarFill');
+    if (titleEl) titleEl.textContent = opts.title || copy.title;
+    if (subEl) subEl.textContent = opts.sub || copy.sub;
+    if (pctEl) pctEl.textContent = opts.pctText || '';
+    if (fillEl) fillEl.style.width = opts.pct != null ? `${Math.min(100, opts.pct)}%` : '8%';
+  }
+
+  function showModelToast(message, kind = 'warn') {
+    let toast = document.getElementById('modelToast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'modelToast';
+      toast.className = 'model-toast';
+      toast.setAttribute('role', 'status');
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.className = 'model-toast show ' + (kind === 'err' ? 'err' : 'warn');
+    clearTimeout(showModelToast._t);
+    showModelToast._t = setTimeout(() => { toast.classList.remove('show'); }, 6000);
+  }
+
   /* ── load model bytes (cache-first) ─────────────────────── */
   async function loadModelBytes(url, cacheKey, onProgress) {
     // 1. Try IndexedDB cache first
@@ -68,7 +183,7 @@
     }
     // 2. Fetch with progress
     const resp = await fetch(url, { cache: 'force-cache' });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
     const total = +resp.headers.get('content-length') || 0;
     const reader = resp.body.getReader();
     const chunks = [];
@@ -99,7 +214,17 @@
   const runEl     = document.getElementById('runBtn');
   const srcCanvas = document.getElementById('srcCanvas');
   const detCanvas = document.getElementById('detCanvas');
+  const markCanvas= document.getElementById('markCanvas');
+  const viewerStack = document.getElementById('viewerStack');
   const cw        = document.getElementById('cw');
+  let activeTool = 'lock';
+  let marks = [];
+  let draftMark = null;
+  let isPointerDown = false;
+  let panStart = null;
+  let view = { scale: 1, x: 0, y: 0 };
+  let windowing = { brightness: 0, contrast: 100, invert: false };
+  let aiHidden = false;
 
   /* ── FRACTURE TYPE CLASSIFIER (v3) ────────────────────── */
   /*
@@ -228,7 +353,7 @@
       // ② Parallel: fetch model bytes while ORT is loading
       //    (cache-first → if cached, resolves in < 5ms)
       if(nb) nb.textContent = '⬇️ Loading model…';
-      const modelBytesPromise = loadModelBytes(LITE_MODEL_PATH, 'lite', (pct, spd, fromCache) => {
+      const modelBytesPromise = loadModelBytesFromCandidates([LITE_MODEL_PATH, LITE_MODEL_FALLBACK], 'lite', (pct, spd, fromCache) => {
         if (!fromCache && pct < 100)
           if(nb) nb.textContent = `⬇️ Model ${pct}%  ${spd>0?spd.toFixed(1)+' MB/s':''}`;
         else if (fromCache)
@@ -300,11 +425,7 @@
       if (lastBitmap) runEl.disabled = false;
       setRunSts('', '');
 
-      // Background-preload the MultiTask classifier (50 MB) so it's ready when needed
-      if (window.MTL) { window.MTL.load().catch(()=>{}); }
-      // (Legacy EfficientNet-B3 still loaded as fallback — used by PDF export only)
-      // Legacy classifier (kept for PDF export compatibility):
-      // likely ready by the time the user runs detection. Non-blocking.
+      if (window.MTL) { window.MTL.load().catch(() => {}); }
       loadClassifier();
 
     } catch(e) {
@@ -320,7 +441,6 @@
     const nb = document.getElementById('navBadge');
 
     if (m === 'full') {
-      // Switch to full model — lazy load if needed
       document.getElementById('optLite').classList.remove('active');
       document.getElementById('optFull').classList.add('active');
 
@@ -332,25 +452,31 @@
         return;
       }
 
-      // Download full model
-      setRunSts('⬇️ Downloading Full model (98.8 MB)…', 'warn');
+      const copy = modelLoadCopy();
+      setModelLoading(true, { title: copy.title, sub: copy.sub });
       runEl.disabled = true;
-      if(nb) nb.textContent = '⬇️ Downloading YOLOv8m Full model (98.8 MB)…';
+      if(nb) nb.textContent = '⬇️ YOLOv8m Full…';
 
       try {
         const fullOpt = document.getElementById('optFull');
         if(fullOpt) fullOpt.classList.add('downloading');
 
-        const modelBytes = await loadModelBytes(FULL_MODEL_URL, 'full', (pct, spd, fromCache) => {
+        const modelBytes = await loadModelBytesFromCandidates(FULL_MODEL_CANDIDATES, FULL_MODEL_CACHE_KEY, (pct, spd, fromCache) => {
           if (fromCache) {
-            setRunSts('⚡ Loading Full model from cache…', 'warn');
+            setModelLoading(true, { title: copy.title, sub: LANG === 'zh' ? '从本地缓存加载…' : 'Loading from cache…', pct, pctText: '100%' });
             if(nb) nb.textContent = '⚡ YOLOv8m from cache…';
           } else {
-            setRunSts(`⬇️ Downloading Full model… ${pct}%  ${spd>0?'@ '+spd.toFixed(1)+' MB/s':''}`, 'warn');
+            setModelLoading(true, {
+              title: copy.title,
+              sub: copy.sub,
+              pct,
+              pctText: `${pct}%${spd > 0 ? ' · ' + spd.toFixed(1) + ' MB/s' : ''}`,
+            });
             if(nb) nb.textContent = `⬇️ YOLOv8m — ${pct}%`;
           }
         });
 
+        setModelLoading(true, { title: copy.compile, sub: copy.sub, pct: 100, pctText: '100%' });
         if(nb) nb.textContent = '🧠 Compiling Full model…';
         const t0 = performance.now();
         const backendOrder = [];
@@ -377,9 +503,17 @@
         if(nb) nb.textContent = `⚡ YOLOv8m Full · 640px · ${bl} · ${dt}s`;
         setRunSts('✅ Full model ready! (YOLOv8m · mAP50 0.82 · 27k unified dataset)', 'ok');
         if(lastBitmap) runEl.disabled = false;
+        setModelLoading(false);
 
       } catch(e) {
         console.error(e);
+        setModelLoading(false);
+        const toastMsg = LANG === 'zh'
+          ? `高精度模型加载失败，已切回 Lite：${e.message}`
+          : LANG === 'ko'
+            ? `Full 모델 로드 실패, Lite로 복귀: ${e.message}`
+            : `Full model failed, reverted to Lite: ${e.message}`;
+        showModelToast(toastMsg, 'err');
         setRunSts(`❌ Download failed: ${e.message}. Reverting to Lite.`, 'err');
         document.getElementById('optFull').classList.remove('active');
         document.getElementById('optLite').classList.add('active');
@@ -387,6 +521,9 @@
         currentModel = 'lite';
         if(nb) nb.textContent = 'YOLOv8n (Lite) · Reverted due to error';
         if(lastBitmap) runEl.disabled = false;
+      } finally {
+        const fullOpt = document.getElementById('optFull');
+        if (fullOpt) fullOpt.classList.remove('downloading');
       }
 
     } else {
@@ -409,6 +546,11 @@
   );
   dropEl.addEventListener('drop', e => { const f = e.dataTransfer?.files?.[0]; if(f) handleFile(f); });
   fileEl.addEventListener('change', e => { const f = e.target.files?.[0]; if(f) handleFile(f); });
+  cw?.addEventListener('click', e => { if (lastBitmap) e.preventDefault(); });
+  cw?.addEventListener('pointerdown', onViewerPointerDown);
+  window.addEventListener('pointermove', onViewerPointerMove);
+  window.addEventListener('pointerup', onViewerPointerUp);
+  cw?.addEventListener('wheel', onViewerWheel, { passive: false });
 
   async function handleFile(f) {
     lastDets = []; lastElapsed = 0;
@@ -464,10 +606,13 @@
     const W = bitmap.naturalWidth||bitmap.width, H = bitmap.naturalHeight||bitmap.height;
     srcCanvas.width=W; srcCanvas.height=H;
     detCanvas.width=W; detCanvas.height=H;
+    markCanvas.width=W; markCanvas.height=H;
     srcCanvas.getContext('2d').drawImage(bitmap,0,0);
     detCanvas.getContext('2d').clearRect(0,0,W,H);
+    markCanvas.getContext('2d').clearRect(0,0,W,H);
     document.getElementById('lboxPh').style.display='none';
     cw.classList.add('on');
+    resetWorkstationForImage();
   }
 
   /* ── LETTERBOX ─────────────────────────────────────────── */
@@ -706,20 +851,15 @@
       for(let c=0;c<nC;c++){const s=data[(4+c)*nA+ai];if(s>ms){ms=s;mc=c;}}
       if(ms<confThr) continue;
       const xc=data[0*nA+ai],yc=data[1*nA+ai],bw=data[2*nA+ai],bh=data[3*nA+ai];
-      const bx1=Math.max(0,((xc-bw/2)-px)/scale),
-            by1=Math.max(0,((yc-bh/2)-py)/scale),
-            bx2=Math.min(W,((xc+bw/2)-px)/scale),
-            by2=Math.min(H,((yc+bh/2)-py)/scale);
-      // Drop implausibly large boxes: a real fracture is a localized finding.
-      // A box covering >70% of the image area (or >92% of either dimension) is
-      // the detector failing to localize (common on out-of-distribution images),
-      // not a meaningful detection — discard it for a precise result.
-      const frac = ((bx2-bx1)*(by2-by1)) / (W*H || 1);
-      const wFrac = (bx2-bx1)/W, hFrac = (by2-by1)/H;
-      if (frac > 0.70 || (wFrac > 0.92 && hFrac > 0.92)) continue;
-      boxes.push({ x1:bx1, y1:by1, x2:bx2, y2:by2, score:ms, cls:mc });
+      boxes.push({
+        x1:Math.max(0,((xc-bw/2)-px)/scale),
+        y1:Math.max(0,((yc-bh/2)-py)/scale),
+        x2:Math.min(W,((xc+bw/2)-px)/scale),
+        y2:Math.min(H,((yc+bh/2)-py)/scale),
+        score:ms,cls:mc
+      });
     }
-    return nms(boxes, META.iou_threshold||0.45);
+    return nms(boxes, META.iou_threshold||0.35);  // tightened from 0.45 → 0.35
   }
 
   function iou(a,b){
@@ -729,13 +869,28 @@
     const aA=(a.x2-a.x1)*(a.y2-a.y1),bA=(b.x2-b.x1)*(b.y2-b.y1);
     return inter/(aA+bA-inter+1e-6);
   }
+  // Containment ratio: how much of the SMALLER box is inside the larger.
+  // High containment with low IoU is the "nested duplicate" pattern that
+  // standard IoU-NMS misses (small redundant box sitting partly inside a larger one).
+  function containment(a,b){
+    const ix1=Math.max(a.x1,b.x1),iy1=Math.max(a.y1,b.y1);
+    const ix2=Math.min(a.x2,b.x2),iy2=Math.min(a.y2,b.y2);
+    const inter=Math.max(0,ix2-ix1)*Math.max(0,iy2-iy1);
+    const aA=(a.x2-a.x1)*(a.y2-a.y1),bA=(b.x2-b.x1)*(b.y2-b.y1);
+    const smaller=Math.min(aA,bA);
+    return inter/(smaller+1e-6);
+  }
   function nms(boxes,thr){
     boxes.sort((a,b)=>b.score-a.score);
     const keep=[],sup=new Uint8Array(boxes.length);
+    const CONTAIN_THR = 0.50;   // ≥50% of smaller box inside larger → suppress
     for(let i=0;i<boxes.length;i++){
       if(sup[i]) continue; keep.push(boxes[i]);
-      for(let j=i+1;j<boxes.length;j++)
-        if(!sup[j]&&boxes[i].cls===boxes[j].cls&&iou(boxes[i],boxes[j])>thr) sup[j]=1;
+      for(let j=i+1;j<boxes.length;j++){
+        if(sup[j]||boxes[i].cls!==boxes[j].cls) continue;
+        if(iou(boxes[i],boxes[j])>thr)              { sup[j]=1; continue; }
+        if(containment(boxes[i],boxes[j])>CONTAIN_THR) sup[j]=1;
+      }
     }
     return keep;
   }
@@ -746,10 +901,7 @@
     const ctx=detCanvas.getContext('2d');
     ctx.clearRect(0,0,W,H);
     dets.forEach((d,i)=>{
-      // Color the box by detection confidence (matches the legend:
-      // high ≥70% green · mid 40–69% orange · low <40% red).
-      // A low-confidence box (e.g. 27%) now shows red, not a confident-looking green.
-      const col = d.score>=0.70 ? '#22c55e' : d.score>=0.40 ? '#f59e0b' : '#ef4444';
+      const col=COLORS[i%COLORS.length];
       const bw=d.x2-d.x1,bh=d.y2-d.y1;
       const lw=Math.max(2,Math.round(W/220));
       ctx.strokeStyle=col;ctx.lineWidth=lw;
@@ -763,6 +915,277 @@
       ctx.fillStyle=col;ctx.fillRect(d.x1-1,ly-th,tw+10,th+2);
       ctx.fillStyle='#000';ctx.fillText(label,d.x1+4,ly-2);
     });
+  }
+
+  /* ── MANUAL RADIOLOGY WORKSTATION ─────────────────────── */
+  function setWsState(key, fallback) {
+    const el = document.getElementById('wsState');
+    if (el) el.textContent = key ? t(key) : fallback;
+  }
+
+  function updateToolButtons() {
+    ['toolLock','toolZoom','toolMeasure','toolPen'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('active');
+    });
+    const id = activeTool === 'zoom' ? 'toolZoom' :
+               activeTool === 'measure' ? 'toolMeasure' :
+               activeTool === 'pen' ? 'toolPen' : 'toolLock';
+    document.getElementById(id)?.classList.add('active');
+    cw?.classList.toggle('zoom-mode', activeTool === 'zoom');
+    cw?.classList.toggle('draw-mode', activeTool === 'measure' || activeTool === 'pen');
+    cw?.classList.toggle('locked', activeTool === 'lock');
+  }
+
+  function setToolMode(tool) {
+    activeTool = tool || 'lock';
+    updateToolButtons();
+    if (activeTool === 'zoom') setWsState('wsZoom');
+    else if (activeTool === 'measure') setWsState('wsMeasure');
+    else if (activeTool === 'pen') setWsState('wsPen');
+    else setWsState('wsLockedReady');
+  }
+
+  function applyViewTransform() {
+    if (!viewerStack) return;
+    viewerStack.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+  }
+
+  function resetViewState() {
+    view = { scale: 1, x: 0, y: 0 };
+    applyViewTransform();
+  }
+
+  function currentFilter() {
+    const b = Math.max(40, Math.min(160, 100 + windowing.brightness));
+    const c = Math.max(70, Math.min(170, windowing.contrast));
+    return `brightness(${b}%) contrast(${c}%) invert(${windowing.invert ? 1 : 0})`;
+  }
+
+  function applyWindowing() {
+    const w = document.getElementById('windowSlider');
+    const c = document.getElementById('contrastSlider');
+    if (w) windowing.brightness = Number(w.value || 0);
+    if (c) windowing.contrast = Number(c.value || 100);
+    document.getElementById('windowVal')?.replaceChildren(document.createTextNode(String(windowing.brightness)));
+    document.getElementById('contrastVal')?.replaceChildren(document.createTextNode(String(windowing.contrast)));
+    srcCanvas.style.filter = currentFilter();
+    document.getElementById('btnInvert')?.classList.toggle('active', windowing.invert);
+  }
+
+  function drawFilteredSource(ctx) {
+    ctx.save();
+    ctx.filter = currentFilter();
+    ctx.drawImage(srcCanvas, 0, 0);
+    ctx.restore();
+  }
+
+  function canvasPoint(e) {
+    const rect = srcCanvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * srcCanvas.width / rect.width;
+    const y = (e.clientY - rect.top) * srcCanvas.height / rect.height;
+    return {
+      x: Math.max(0, Math.min(srcCanvas.width, x)),
+      y: Math.max(0, Math.min(srcCanvas.height, y))
+    };
+  }
+
+  function measureLength(mark) {
+    if (!mark || !mark.points || mark.points.length < 2) return 0;
+    const a = mark.points[0], b = mark.points[1];
+    return Math.hypot(b.x - a.x, b.y - a.y);
+  }
+
+  function setMeasureText(mark) {
+    const el = document.getElementById('measureReadout');
+    if (!el) return;
+    if (!mark) {
+      el.textContent = t('measureHint');
+      return;
+    }
+    el.textContent = `${measureLength(mark).toFixed(1)} px`;
+  }
+
+  function drawMeasure(ctx, mark) {
+    const [a,b] = mark.points;
+    const W = markCanvas.width;
+    const lw = Math.max(2, W / 420);
+    ctx.save();
+    ctx.strokeStyle = '#e8b85a';
+    ctx.fillStyle = '#e8b85a';
+    ctx.lineWidth = lw;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    [a,b].forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, lw * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    const label = `${measureLength(mark).toFixed(1)} px`;
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    const fs = Math.max(13, W / 52);
+    ctx.font = `700 ${fs}px sans-serif`;
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(2,4,3,.78)';
+    ctx.fillRect(mx - tw / 2 - 6, my - fs - 8, tw + 12, fs + 8);
+    ctx.fillStyle = '#f5d58b';
+    ctx.fillText(label, mx - tw / 2, my - 8);
+    ctx.restore();
+  }
+
+  function drawPen(ctx, mark) {
+    const pts = mark.points;
+    if (!pts || pts.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = '#45d6c6';
+    ctx.lineWidth = Math.max(2, markCanvas.width / 360);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function redrawMarks() {
+    if (!markCanvas) return;
+    const ctx = markCanvas.getContext('2d');
+    ctx.clearRect(0, 0, markCanvas.width, markCanvas.height);
+    [...marks, draftMark].filter(Boolean).forEach(mark => {
+      if (mark.type === 'measure') drawMeasure(ctx, mark);
+      if (mark.type === 'pen') drawPen(ctx, mark);
+    });
+  }
+
+  // List of all workstation control elements that should be enabled when an
+  // image is loaded and re-disabled when the user clears the view.
+  const WS_CONTROL_IDS = [
+    'toolLock', 'toolZoom', 'toolMeasure', 'toolPen',
+    'btnUndoMark', 'btnClearMarks', 'btnResetView', 'btnInvert',
+    'btnHideAI', 'windowSlider', 'contrastSlider',
+  ];
+
+  function setWorkstationEnabled(enabled) {
+    WS_CONTROL_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !enabled;
+    });
+  }
+
+  function resetWorkstationForImage() {
+    marks = [];
+    draftMark = null;
+    isPointerDown = false;
+    panStart = null;
+    windowing = { brightness: 0, contrast: 100, invert: false };
+    const w = document.getElementById('windowSlider');
+    const c = document.getElementById('contrastSlider');
+    if (w) w.value = 0;
+    if (c) c.value = 100;
+    resetViewState();
+    applyWindowing();
+    setToolMode('lock');
+    setMeasureText(null);
+    setAIHidden(false);
+    // CRITICAL: enable all workstation controls now that an image is loaded.
+    // (HTML defaults them to `disabled` so the toolbar looks greyed out until
+    //  there's actually something to manipulate.)
+    setWorkstationEnabled(true);
+  }
+
+  function setAIHidden(on) {
+    aiHidden = !!on;
+    document.body.classList.toggle('ai-hidden', aiHidden);
+    const btn = document.getElementById('btnHideAI');
+    if (btn) {
+      btn.classList.toggle('active', aiHidden);
+      const span = btn.querySelector('span');
+      if (span) span.textContent = t(aiHidden ? 'showAI' : 'hideAI');
+    }
+    setWsState(aiHidden ? 'aiHidden' : (
+      activeTool === 'zoom' ? 'wsZoom' :
+      activeTool === 'measure' ? 'wsMeasure' :
+      activeTool === 'pen' ? 'wsPen' : 'wsLockedReady'
+    ));
+  }
+
+  function onViewerPointerDown(e) {
+    if (!lastBitmap || activeTool === 'lock') return;
+    e.preventDefault();
+    isPointerDown = true;
+    cw?.classList.add('dragging');
+    if (activeTool === 'zoom') {
+      panStart = { cx: e.clientX, cy: e.clientY, x: view.x, y: view.y };
+      return;
+    }
+    const p = canvasPoint(e);
+    if (activeTool === 'measure') {
+      draftMark = { type: 'measure', points: [p, p] };
+      setMeasureText(draftMark);
+    } else if (activeTool === 'pen') {
+      draftMark = { type: 'pen', points: [p] };
+    }
+    redrawMarks();
+  }
+
+  function onViewerPointerMove(e) {
+    if (!isPointerDown || !lastBitmap || activeTool === 'lock') return;
+    e.preventDefault();
+    if (activeTool === 'zoom' && panStart) {
+      view.x = panStart.x + e.clientX - panStart.cx;
+      view.y = panStart.y + e.clientY - panStart.cy;
+      applyViewTransform();
+      return;
+    }
+    if (!draftMark) return;
+    const p = canvasPoint(e);
+    if (draftMark.type === 'measure') {
+      draftMark.points[1] = p;
+      setMeasureText(draftMark);
+    } else if (draftMark.type === 'pen') {
+      draftMark.points.push(p);
+    }
+    redrawMarks();
+  }
+
+  function onViewerPointerUp(e) {
+    if (!isPointerDown) return;
+    e.preventDefault();
+    isPointerDown = false;
+    cw?.classList.remove('dragging');
+    panStart = null;
+    if (draftMark) {
+      if (draftMark.type === 'pen' && draftMark.points.length < 2) {
+        draftMark = null;
+      } else {
+        marks.push(draftMark);
+        if (draftMark.type === 'measure') setMeasureText(draftMark);
+        draftMark = null;
+      }
+      redrawMarks();
+    }
+  }
+
+  function onViewerWheel(e) {
+    if (!lastBitmap || activeTool !== 'zoom') return;
+    e.preventDefault();
+    const oldScale = view.scale;
+    const delta = e.deltaY < 0 ? 1.12 : 0.89;
+    const next = Math.max(0.5, Math.min(6, oldScale * delta));
+    const rect = cw.getBoundingClientRect();
+    const ax = e.clientX - rect.left;
+    const ay = e.clientY - rect.top;
+    const bx = (ax - view.x) / oldScale;
+    const by = (ay - view.y) / oldScale;
+    view.scale = next;
+    view.x = ax - bx * next;
+    view.y = ay - by * next;
+    applyViewTransform();
   }
 
   /* ── PIPELINE RESET ────────────────────────────────────── */
@@ -830,18 +1253,10 @@
     document.getElementById('scrResult').innerHTML = html;
   }
 
-  /* ── RENDER STAGE 2 (Classification) — CASCADE MODE ──────────────────────────
-   * Behavior:
-   *   - dets empty   → show "no fracture detected" banner; DO NOT run classifier
-   *                    (presence is the detector's job; the cascade contract enforces this)
-   *   - dets present → run classifier (10-class, Normal suppressed at inference);
-   *                    show top type + top-3 + reliability gating (OOD / low conf)
-   * Result: no contradictions between detector and classifier; matches BoneView/Rayvolve UX.
-   */
+  /* ── RENDER STAGE 2 — MTL per-box (位置 · 方向 · 形态学 + 临床解读) ─────── */
   async function renderClassification(dets) {
     const clfEl = document.getElementById('clfResult');
 
-    // ── CASCADE: no fracture detected → skip classifier entirely ──
     if (!dets || dets.length === 0) {
       setStage('stageClf','done');
       clfEl.innerHTML = `<div class="clf-banner info" style="border-color:var(--good);background:rgba(34,197,94,0.08)">
@@ -853,11 +1268,10 @@
 
     setStage('stageClf','active');
 
-    // Ensure MTL is loaded (lazy; usually preloaded in background)
     if (!window.MTL?.isReady() && !window.MTL?.failed()) {
       clfEl.innerHTML = `<div style="color:var(--fg2);font-size:11px;text-align:center;padding:16px 0">
         <span class="spin"></span> &nbsp;${t('clfLoading')}</div>`;
-      try { await window.MTL.load(); } catch(e) { console.warn('MTL load failed', e); }
+      try { await window.MTL.load(); } catch (e) { console.warn('MTL load failed', e); }
     }
     if (!window.MTL?.isReady()) {
       setStage('stageClf','fail');
@@ -865,13 +1279,6 @@
       return;
     }
 
-    // ── PER-BOX CASCADE with MTL (Multi-Task Context-Aware Net) ──
-    // For each detection: local_roi (crop) + global_image (full X-ray) → 3 task heads:
-    //   1) Location  (Shaft / Joint)        — resolves "Avulsion vs shaft" confusion
-    //   2) Direction (Trans / Obli / Long)  — resolves "fracture-line direction" errors
-    //   3) Morphology multi-label [Displaced, Comminuted]
-    //                                       — EdgeGuidedAttention gates Comminuted against
-    //                                         spatial-topology evidence (no fragment → no firing)
     clfEl.innerHTML = `<div style="color:var(--fg2);font-size:11px;text-align:center;padding:14px 0">
       <span class="spin"></span> &nbsp;${t('clfPerBoxProg').replace('{n}', dets.length)}</div>`;
 
@@ -881,52 +1288,43 @@
       try {
         const decoded = await window.MTL.classifyDetection(lastBitmap, det, 0.15);
         if (decoded) perBox.push({ det, decoded, idx: i });
-      } catch(e) { console.warn('MTL classify failed for box', i, e); }
+      } catch (e) { console.warn('MTL classify failed for box', i, e); }
       clfEl.innerHTML = `<div style="color:var(--fg2);font-size:11px;text-align:center;padding:14px 0">
-        <span class="spin"></span> &nbsp;${t('clfPerBoxProg').replace('{n}', dets.length)} (${i+1}/${dets.length})</div>`;
+        <span class="spin"></span> &nbsp;${t('clfPerBoxProg').replace('{n}', dets.length)} (${i + 1}/${dets.length})</div>`;
     }
+
     setStage('stageClf','done');
     if (perBox.length === 0) {
       clfEl.innerHTML = `<div style="color:var(--bad);font-size:11px;padding:12px">${t('clfPerBoxFailed')}</div>`;
       return;
     }
 
-    // OOD: if input flagged as non-X-ray, dim everything (whole-image trust signal)
-    const ood = (lastIsXray === false);
-
-    const COL = ['#22c55e','#3b82f6','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16'];
+    const ood = lastIsXray === false;
+    const accentCols = ['#5b9eff','#45d6c6','#7eb8ff','#a78bfa'];
     let html = '';
-    if (ood) {
-      html += `<div class="clf-banner ood">⚠️ ${t('clfOOD')}</div>`;
-    }
+    if (ood) html += `<div class="clf-banner ood">⚠️ ${t('clfOOD')}</div>`;
     html += `<div class="${ood ? 'clf-dim' : ''}">`;
     html += `<div style="font-size:11px;color:var(--fg2);margin-bottom:8px">${t('clfPerBoxHeader').replace('{n}', perBox.length)}</div>`;
 
-    // One card per detected fracture region — MTL-structured output
     for (const item of perBox) {
       const d = item.decoded;
-      const sideCol = COL[item.idx % COL.length];
+      const sideCol = accentCols[item.idx % accentCols.length];
       const detConf = (item.det.score * 100).toFixed(1);
       const loc = getLocationDesc(item.det, srcCanvas.width, srcCanvas.height);
       const summary = window.MTL.formatLine(d, LANG);
       const barsHtml = window.MTL.formatHTML(d, LANG);
 
-      html += `<div style="border-left:3px solid ${sideCol};padding:10px 12px;margin-bottom:10px;background:#0a1530;border-radius:6px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
-          <span style="font-weight:700;font-size:13px;color:var(--fg)">#${item.idx+1} · ${summary}</span>
-        </div>
-        <div style="font-size:10px;color:var(--fg3);margin-bottom:6px">
-          ${t('clfDetConf')} ${detConf}% · ${loc}
-        </div>
-        ${barsHtml}
+      html += `<div class="mtl-lesion-card" style="border-left:3px solid ${sideCol}">
+        <div class="mtl-lesion-title">#${item.idx + 1} · ${summary}</div>
+        <div class="mtl-lesion-meta">${t('clfDetConf')} ${detConf}% · ${loc}</div>
+        <div class="mtl-bars">${barsHtml}</div>
       </div>`;
     }
 
     const bl = (window.MTL.backend() || 'wasm').toUpperCase();
-    html += `<div style="margin-top:10px;padding:7px 10px;background:#090f1e;border-radius:5px;
-      font-size:10px;color:var(--fg3);border:1px solid var(--border)">
+    html += `<div class="mtl-model-strip">
       🧠 MultiTask Context-Aware Net · <strong>per-box dual-input</strong> · ${bl} &nbsp;·&nbsp; 位置 + 方向 + 形态学</div>`;
-    html += `</div>`;  // close clf-dim wrapper
+    html += `</div>`;
 
     clfEl.innerHTML = html;
   }
@@ -977,8 +1375,10 @@
                               : LANG === 'ko' ? '⏳ 브라우저 최적화 중(약 3초, 처음만)…'
                               : '⏳ Optimizing for this browser (~3s, one-time)…';
             setRunSts(fallbackMsg, 'warn');
-            const url = currentModel === 'full' ? FULL_MODEL_URL : LITE_MODEL_PATH;
-            const modelBytes = await loadModelBytes(url, currentModel);
+            const modelBytes = currentModel === 'full'
+              ? await loadModelBytesFromCandidates(FULL_MODEL_CANDIDATES, FULL_MODEL_CACHE_KEY)
+              : await loadModelBytes(resolveModelUrl(LITE_MODEL_PATH), 'lite').catch(() =>
+                loadModelBytes(resolveModelUrl(LITE_MODEL_FALLBACK), 'lite'));
             const wasmSession = await ort.InferenceSession.create(modelBytes, {
               executionProviders: ['wasm'],
               graphOptimizationLevel: 'all',
@@ -1021,11 +1421,53 @@
       }
     },
 
+    setTool(tool) {
+      if (!lastBitmap) return;
+      setToolMode(tool);
+    },
+
+    toggleAI() {
+      if (!lastBitmap) return;
+      setAIHidden(!aiHidden);
+    },
+
+    resetView() {
+      resetViewState();
+    },
+
+    toggleInvert() {
+      if (!lastBitmap) return;
+      windowing.invert = !windowing.invert;
+      applyWindowing();
+    },
+
+    setWindowing() {
+      if (!lastBitmap) return;
+      applyWindowing();
+    },
+
+    undoMark() {
+      marks.pop();
+      draftMark = null;
+      const measures = marks.filter(m => m.type === 'measure');
+      setMeasureText(measures.length ? measures[measures.length - 1] : null);
+      redrawMarks();
+    },
+
+    clearMarks() {
+      marks = [];
+      draftMark = null;
+      setMeasureText(null);
+      redrawMarks();
+    },
+
     exportPNG() {
       const tmp=document.createElement('canvas');
       tmp.width=srcCanvas.width;tmp.height=srcCanvas.height;
       const ctx=tmp.getContext('2d');
-      ctx.drawImage(srcCanvas,0,0);ctx.drawImage(detCanvas,0,0);
+      drawFilteredSource(ctx);
+      if (!aiHidden) ctx.drawImage(detCanvas,0,0);
+      ctx.drawImage(markCanvas,0,0);
       const a=document.createElement('a');
       a.download='fracture_detection.png';
       a.href=tmp.toDataURL('image/png');a.click();
@@ -1039,12 +1481,13 @@
       const hasFracture = isWarn;
       // CASCADE: a clean "no fracture detected" report is now a valid output.
 
-      // Merge srcCanvas + detCanvas into one annotated image
+      // Merge source image, optional AI overlay, and manual workstation marks.
       const tmp = document.createElement('canvas');
       tmp.width = srcCanvas.width; tmp.height = srcCanvas.height;
       const tctx = tmp.getContext('2d');
-      tctx.drawImage(srcCanvas, 0, 0);
-      tctx.drawImage(detCanvas, 0, 0);
+      drawFilteredSource(tctx);
+      if (!aiHidden) tctx.drawImage(detCanvas, 0, 0);
+      tctx.drawImage(markCanvas, 0, 0);
       const imgDataURL = tmp.toDataURL('image/jpeg', 0.92);
 
       // ── CASCADE: run REAL EfficientNet-B3 classifier on the whole image (not the old fake heuristic).
@@ -1473,6 +1916,10 @@ img{max-width:100%;border:1px solid #e5e7eb;border-radius:10px;display:block;mar
       document.getElementById('lboxPh').style.display='';
       document.getElementById('xrayWarn').classList.remove('show');
       detCanvas.getContext('2d').clearRect(0,0,detCanvas.width,detCanvas.height);
+      markCanvas.getContext('2d').clearRect(0,0,markCanvas.width,markCanvas.height);
+      marks=[];draftMark=null;resetViewState();setToolMode('lock');setAIHidden(false);
+      windowing={brightness:0,contrast:100,invert:false};applyWindowing();setMeasureText(null);
+      setWorkstationEnabled(false);   // disable workstation tools — no image to manipulate
       resetPipeline();
       setExport(false);
       setPipeStep(0);
@@ -1574,11 +2021,17 @@ img{max-width:100%;border:1px solid #e5e7eb;border-radius:10px;display:block;mar
     // Also update the run-status bar
     const visCount = visible.length;
     setRunSts(`✅ ${lastElapsed}ms · ${visCount} ${t(visCount!==1?'detections':'detection')}`, 'ok');
+    updateToolButtons();
+    setAIHidden(aiHidden);
   };
 
   /* ── BOOT ───────────────────────────────────────────────── */
-  if (document.readyState==='loading')
-    document.addEventListener('DOMContentLoaded', init);
-  else init();
+  async function boot() {
+    await purgeStaleClientCache();
+    init();
+  }
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', boot);
+  else boot();
 
 })();

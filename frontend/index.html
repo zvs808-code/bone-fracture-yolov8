@@ -4,36 +4,42 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
 <meta name="description" content="YOLOv8-based bone fracture detector for X-ray images, Optuna AutoML HPO, on-device ONNX inference. Educational and research use only — not a medical device."/>
-<meta name="theme-color" content="#07101f"/>
+<meta name="theme-color" content="#020408"/>
 <title>🦴 Bone Fracture Detector</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<link rel="stylesheet" href="./reading-room-theme.css?v=2026-06-01-mtl-blue"/>
 <style>
 :root{
-  --bg:#07101f;--bg2:#0c1629;--panel:#111b30;
-  --border:#2a3a5a;--border2:#3d5078;
-  --fg:#f0f5ff;--fg2:#b8c5dc;--fg3:#8a9ab5;
-  --accent:#5b9eff;--accent2:#3d85ff;
-  --good:#4ade80;--warn:#fbbf24;--bad:#f87171;
-  --scan:#00d4ff;--lbox:#000810;
+  --bg:#050706;--bg2:#0a0f0e;--panel:#101615;--panel2:#0c1211;
+  --border:#263a36;--border2:#3a514b;
+  --fg:#eef7f4;--fg2:#b9c9c4;--fg3:#7f918c;
+  --accent:#45d6c6;--accent2:#9bdc65;
+  --good:#62d47f;--warn:#e8b85a;--bad:#ff6b6b;
+  --scan:#6fffe9;--lbox:#020403;
   --r:14px;--rs:8px;--rx:5px;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
 html,body{height:100%;overscroll-behavior:none}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
-  background:var(--bg);color:var(--fg);min-height:100vh;display:flex;flex-direction:column;
+  background:
+    linear-gradient(90deg,rgba(69,214,198,.035) 1px,transparent 1px) 0 0/48px 48px,
+    linear-gradient(180deg,#050706 0%,#07100e 46%,#050706 100%);
+  color:var(--fg);min-height:100vh;display:flex;flex-direction:column;
   padding-top:env(safe-area-inset-top)}
 
 /* NAV */
-nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
+nav{position:sticky;top:0;z-index:200;background:rgba(5,7,6,.94);
   backdrop-filter:blur(12px);border-bottom:1px solid var(--border);
   padding:0 20px;height:54px;display:flex;align-items:center;
   justify-content:space-between;gap:10px}
 .nav-logo{display:flex;align-items:center;gap:9px;font-size:15px;
   font-weight:700;color:var(--fg);text-decoration:none}
-.nav-icon{width:32px;height:32px;background:linear-gradient(135deg,#1a5ce5,#00d4ff);
+.nav-icon{width:32px;height:32px;background:linear-gradient(135deg,#18342f,#45d6c6 55%,#9bdc65);
   border-radius:8px;display:flex;align-items:center;justify-content:center;
   font-size:17px;flex-shrink:0}
 .nav-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-#navBadge{font-size:10px;color:var(--fg3);background:#0c1629;border:1px solid var(--border);
+#navBadge{font-size:10px;color:var(--fg3);background:#0b1110;border:1px solid var(--border);
   padding:3px 8px;border-radius:5px;white-space:nowrap}
 .lang-grp{display:flex;border:1px solid var(--border2);border-radius:5px;overflow:hidden}
 .lang-btn{padding:4px 8px;font-size:10px;font-weight:700;background:transparent;
@@ -41,7 +47,7 @@ nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
 .lang-btn.active{background:var(--accent);color:#fff}
 .nav-lnk{padding:5px 10px;font-size:11px;color:var(--fg2);background:transparent;
   border:1px solid var(--border2);border-radius:5px;cursor:pointer;transition:all .2s}
-.nav-lnk:hover{color:var(--fg);background:#1a2540}
+.nav-lnk:hover{color:var(--fg);background:#12201d}
 
 /* MOBILE NAV — at iPhone widths, hide model badge and shrink controls */
 @media (max-width:640px){
@@ -72,13 +78,13 @@ nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
 /* MODEL SELECTOR */
 .model-sel{display:flex;gap:6px;margin-bottom:12px}
 .model-opt{flex:1;padding:8px 10px;border-radius:var(--rs);cursor:pointer;
-  border:1.5px solid var(--border2);background:#0c1629;transition:all .2s;position:relative}
-.model-opt.active{border-color:var(--accent);background:#0d1a38}
+  border:1.5px solid var(--border2);background:#0b1110;transition:all .2s;position:relative}
+.model-opt.active{border-color:var(--accent);background:#0e211e}
 .model-opt.disabled{opacity:.45;cursor:not-allowed}
 .mo-name{font-size:12px;font-weight:700;display:flex;align-items:center;gap:5px}
 .mo-badge{font-size:9px;padding:1px 5px;border-radius:3px;font-weight:700}
-.mo-lite{background:#0a2a10;color:var(--good);border:1px solid #1a4a20}
-.mo-full{background:#1a1a0a;color:var(--warn);border:1px solid #3a3a10}
+.mo-lite{background:#0d2514;color:var(--good);border:1px solid #235632}
+.mo-full{background:#241d0d;color:var(--warn);border:1px solid #604716}
 .mo-stats{font-size:10px;color:var(--fg2);margin-top:3px}
 .mo-sel-dot{width:7px;height:7px;border-radius:50%;border:1.5px solid var(--fg3);
   position:absolute;top:8px;right:8px}
@@ -87,12 +93,12 @@ nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.3)} 50%{box-shadow:0 0 0 5px rgba(245,158,11,0)}}
 
 /* LIGHTBOX */
-.lbox{position:relative;background:var(--lbox);border:3px dashed var(--accent);
+.lbox{position:relative;background:var(--lbox);border:3px dashed rgba(69,214,198,.65);
   border-radius:10px;min-height:300px;display:flex;align-items:center;
   justify-content:center;cursor:pointer;transition:all .2s;overflow:hidden;flex-direction:column;
   animation:lboxPulse 2.2s ease-in-out infinite}
-.lbox.has-img{animation:none;border:2px solid var(--border2)}
-.lbox:hover,.lbox.drag{border-color:var(--accent);transform:scale(1.005)}
+.lbox.has-img{animation:none;border:2px solid var(--border2);cursor:default}
+.lbox:hover,.lbox.drag{border-color:var(--accent)}
 .lbox-ph{text-align:center;color:var(--fg);pointer-events:none;padding:20px}
 .lbox-ph .ico{font-size:72px;margin-bottom:14px;display:block;
   filter:drop-shadow(0 0 12px rgba(91,158,255,.4))}
@@ -106,10 +112,19 @@ nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
   50%    {box-shadow:0 0 0 10px rgba(91,158,255,.15)}
 }
 input[type=file]{display:none}
-.cw{position:relative;width:100%;display:none}
+.cw{position:relative;width:100%;display:none;overflow:hidden;background:#000;touch-action:none}
 .cw.on{display:block}
+.viewer-stack{position:relative;width:100%;transform-origin:0 0;will-change:transform}
 #srcCanvas{width:100%;display:block;border-radius:8px}
-#detCanvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+#detCanvas,#markCanvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
+#markCanvas{z-index:6}
+.cw.draw-mode #markCanvas{pointer-events:auto}
+.cw.zoom-mode{cursor:grab}
+.cw.zoom-mode.dragging{cursor:grabbing}
+.cw.draw-mode{cursor:crosshair}
+body.ai-hidden #detCanvas{display:none}
+body.ai-hidden #aiPanel{display:none}
+body.ai-hidden .wrap{grid-template-columns:minmax(0,980px);justify-content:center}
 .scanline{position:absolute;left:0;right:0;height:2px;
   background:linear-gradient(90deg,transparent,var(--scan),transparent);
   box-shadow:0 0 10px 2px rgba(0,212,255,.5);
@@ -141,6 +156,34 @@ input[type=file]{display:none}
 .local-badge{display:inline-flex;align-items:center;gap:4px;background:#0a1a10;
   border:1px solid #1a3a22;color:var(--good);font-size:10px;
   padding:3px 9px;border-radius:20px;font-weight:500;margin-top:8px}
+
+/* RADIOLOGY WORKSTATION */
+.workstation{margin-top:10px;padding:10px;border:1px solid var(--border);
+  border-radius:var(--rs);background:linear-gradient(180deg,#0d1413,#090d0c)}
+.ws-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:9px}
+.ws-title{font-size:12px;font-weight:800;letter-spacing:.02em;color:var(--fg)}
+.ws-state{display:block;font-size:10px;color:var(--fg3);margin-top:2px;line-height:1.35}
+.tool-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.tool-btn{min-height:34px;border:1px solid var(--border2);border-radius:var(--rx);
+  background:#0b1110;color:var(--fg2);font-size:10px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s}
+.tool-btn:hover:not(:disabled){border-color:var(--accent);color:var(--fg);background:#10201d}
+.tool-btn.active{background:rgba(69,214,198,.12);border-color:var(--accent);color:var(--accent)}
+.tool-btn.warn.active{background:rgba(232,184,90,.13);border-color:var(--warn);color:var(--warn)}
+.tool-btn:disabled{opacity:.35;cursor:not-allowed}
+.adjust-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}
+.adjust{display:grid;grid-template-columns:auto 1fr auto;gap:7px;align-items:center;
+  padding:7px 8px;border:1px solid var(--border);border-radius:var(--rx);background:#070b0a}
+.adjust span{font-size:10px;color:var(--fg2);white-space:nowrap}
+.adjust output{font-size:10px;color:var(--fg3);font-variant-numeric:tabular-nums;min-width:34px;text-align:right}
+.adjust input{width:100%;accent-color:var(--accent)}
+.measure-readout{margin-top:8px;min-height:18px;font-size:10px;color:var(--fg3);
+  border-top:1px solid var(--border);padding-top:8px;line-height:1.45}
+@media(max-width:520px){
+  .tool-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .adjust-grid{grid-template-columns:1fr}
+}
 
 /* EXAMPLES — hidden (image assets not bundled; would show "load failed") */
 .ex-row{display:none !important}
@@ -181,7 +224,7 @@ input[type=file]{display:none}
 .stage.active{border-color:var(--accent)}
 .stage.done{border-color:#1a4a22}
 .stage.fail{border-color:#4a1a1a}
-.stage-hd{padding:10px 14px;background:#0c1629;display:flex;align-items:center;
+.stage-hd{padding:10px 14px;background:#0b1110;display:flex;align-items:center;
   gap:8px;font-size:11px;font-weight:600}
 .stage-icon{font-size:16px;flex-shrink:0}
 .stage-body{padding:12px 14px;display:none}
@@ -196,7 +239,7 @@ input[type=file]{display:none}
 
 /* Fracture type tags */
 .ftype-wrap{display:flex;flex-direction:column;gap:6px;margin-top:8px}
-.ftype-card{padding:10px 12px;border-radius:var(--rs);background:#0c1629;
+.ftype-card{padding:10px 12px;border-radius:var(--rs);background:#0b1110;
   border:1px solid var(--border);display:flex;align-items:flex-start;gap:10px}
 .ftype-card .dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;margin-top:3px}
 .ftype-body{flex:1}
@@ -207,7 +250,7 @@ input[type=file]{display:none}
 .ftype-fill{height:100%;border-radius:2px;transition:width .6s ease}
 
 /* Conf legend */
-.conf-leg{padding:9px 12px;border-radius:var(--rs);background:#090f1e;
+.conf-leg{padding:9px 12px;border-radius:var(--rs);background:#070b0a;
   border:1px solid var(--border);font-size:10px;color:var(--fg3);margin-top:10px}
 .cl-title{color:var(--fg2);font-weight:600;margin-bottom:5px;font-size:11px}
 .cl-tiers{display:flex;gap:10px;flex-wrap:wrap}
@@ -219,8 +262,8 @@ input[type=file]{display:none}
 .act-btn{flex:1;min-width:70px;padding:8px 10px;font-size:11px;font-weight:600;
   border-radius:var(--rs);cursor:pointer;transition:all .2s;
   display:flex;align-items:center;justify-content:center;gap:5px;
-  border:1px solid var(--border2);background:#0c1629;color:var(--fg2)}
-.act-btn:hover{color:var(--fg);border-color:var(--accent);background:#0f1e3a}
+  border:1px solid var(--border2);background:#0b1110;color:var(--fg2)}
+.act-btn:hover{color:var(--fg);border-color:var(--accent);background:#10201d}
 .act-btn:disabled{opacity:.3;cursor:not-allowed}
 
 /* COLLAPSE */
@@ -250,11 +293,11 @@ input[type=file]{display:none}
 
 /* Hero band */
 .hero{background:
-  radial-gradient(60% 80% at 50% 0%, rgba(91,158,255,.18), transparent 70%),
-  linear-gradient(180deg, #0a1428 0%, #07101f 100%)}
+  linear-gradient(90deg,rgba(69,214,198,.05) 1px,transparent 1px) 0 0/42px 42px,
+  linear-gradient(180deg,#0d1513 0%,#050706 100%)}
 .hero-inner{padding:46px 18px 38px;text-align:center}
 .hero-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;
-  background:rgba(91,158,255,.10);border:1px solid rgba(91,158,255,.30);
+  background:rgba(69,214,198,.10);border:1px solid rgba(69,214,198,.30);
   border-radius:99px;font-size:11px;color:var(--accent);font-weight:600;
   margin-bottom:16px;letter-spacing:.3px}
 .hero-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--good);
@@ -262,7 +305,7 @@ input[type=file]{display:none}
 @keyframes dot-pulse{0%,100%{box-shadow:0 0 0 0 rgba(74,222,128,.6)}50%{box-shadow:0 0 0 6px rgba(74,222,128,0)}}
 .hero-title{font-size:clamp(26px,4.4vw,40px);font-weight:800;line-height:1.15;
   letter-spacing:-.5px;margin-bottom:12px;
-  background:linear-gradient(135deg,#fff 0%,#a5c8ff 50%,#5b9eff 100%);
+  background:linear-gradient(135deg,#fff 0%,#c8fff5 52%,#45d6c6 100%);
   -webkit-background-clip:text;background-clip:text;color:transparent}
 .hero-sub{font-size:clamp(13px,1.6vw,15px);color:var(--fg2);max-width:720px;
   margin:0 auto 28px;line-height:1.65}
@@ -270,11 +313,11 @@ input[type=file]{display:none}
 .cta-btn{padding:10px 20px;border-radius:var(--rs);font-size:13px;font-weight:700;
   text-decoration:none;display:inline-flex;align-items:center;gap:6px;
   transition:transform .15s, box-shadow .15s}
-.cta-primary{background:linear-gradient(135deg,#3d85ff,#5b9eff);color:#fff;
-  box-shadow:0 4px 18px rgba(91,158,255,.35)}
-.cta-primary:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(91,158,255,.45)}
+.cta-primary{background:linear-gradient(135deg,#24786e,#45d6c6);color:#03100e;
+  box-shadow:0 4px 18px rgba(69,214,198,.26)}
+.cta-primary:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(69,214,198,.34)}
 .cta-secondary{background:transparent;color:var(--fg2);border:1px solid var(--border2)}
-.cta-secondary:hover{color:var(--fg);background:#1a2540}
+.cta-secondary:hover{color:var(--fg);background:#12201d}
 
 /* USP grid */
 .usp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:30px}
@@ -301,7 +344,7 @@ input[type=file]{display:none}
 .usp-card.rule .usp-icon{color:var(--warn)}
 
 /* Workflow band */
-.workflow{background:linear-gradient(180deg,#07101f 0%,#0a1428 100%)}
+.workflow{background:linear-gradient(180deg,#050706 0%,#0d1513 100%)}
 .wf-title{text-align:center;font-size:13px;color:var(--fg2);
   text-transform:uppercase;letter-spacing:2px;margin-bottom:24px;font-weight:600}
 .wf-row{display:grid;grid-template-columns:repeat(5,1fr) ;gap:6px;align-items:stretch}
@@ -310,7 +353,7 @@ input[type=file]{display:none}
   border-radius:var(--rs);position:relative;text-align:center;transition:all .2s}
 .wf-step:hover{border-color:var(--accent);transform:translateY(-2px)}
 .wf-num{position:absolute;top:-10px;left:50%;transform:translateX(-50%);
-  width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;
+  width:24px;height:24px;border-radius:50%;background:var(--accent);color:#03100e;
   font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;
   border:3px solid var(--bg)}
 .wf-icon{font-size:22px;margin:8px 0 6px;line-height:1}
@@ -330,7 +373,7 @@ input[type=file]{display:none}
   background:#0c1629;border:1px solid var(--border);color:var(--fg2)}
 
 /* FOOTER */
-.footer{background:#0a0f1e;border-top:1px solid var(--border);
+.footer{background:#060908;border-top:1px solid var(--border);
   padding:9px 20px;font-size:9px;color:var(--fg3);text-align:center;
   margin-top:16px;line-height:1.6}
 
@@ -419,7 +462,7 @@ input[type=file]{display:none}
       <button class="lang-btn" onclick="setLang('en')">EN</button>
       <button class="lang-btn" onclick="setLang('zh')">中</button>
     </div>
-    <a class="nav-lnk" href="./details.html" data-i18n="details">详情</a>
+    <a class="nav-lnk" data-i18n="details" href="./details.html">详情</a>
     <button class="nav-lnk" onclick="openModal('modalAbout')" data-i18n="aboutModel">About</button>
     <button class="nav-lnk" onclick="openModal('modalDisc')" data-i18n="disclaimer">Disclaimer</button>
   </div>
@@ -444,7 +487,7 @@ input[type=file]{display:none}
       <a href="#runHere" class="cta-btn cta-primary">
         🩻 <span data-i18n="heroCta">开始检测</span>
       </a>
-      <a href="./details.html" class="cta-btn cta-secondary">
+      <a class="cta-btn cta-secondary" href="./details.html">
         📖 <span data-i18n="heroSecCta">技术详情</span>
       </a>
     </div>
@@ -538,7 +581,7 @@ input[type=file]{display:none}
           <div class="mo-name">YOLOv8n <span class="mo-badge mo-lite" data-i18n="lite">Lite</span></div>
           <div class="mo-stats">11.7 MB · <span data-i18n="fast">Fast</span> · legacy fallback</div>
         </div>
-        <div class="model-opt disabled" id="optFull" title="Loading ORT first…">
+        <div class="model-opt disabled" id="optFull" title="Loading ORT first…" onclick="selectModel('full')">
           <div class="mo-sel-dot"></div>
           <div class="mo-name">YOLOv8m <span class="mo-badge mo-full" data-i18n="full">Full</span></div>
           <div class="mo-stats">99 MB · mAP50 0.82 · YOLOv8m · <span data-i18n="accurate">Accurate</span></div>
@@ -559,13 +602,61 @@ input[type=file]{display:none}
           <div class="t1" data-i18n="tapSel">Tap to select X-ray image</div>
           <div class="t2" data-i18n="fmts">JPG · PNG · WebP · BMP</div>
         </div>
-        <div class="cw" id="cw">
-          <canvas id="srcCanvas" aria-label="X-ray image preview" role="img"></canvas>
-          <canvas id="detCanvas" aria-label="Fracture detection overlay" aria-hidden="true"></canvas>
+        <div class="cw locked" id="cw">
+          <div class="viewer-stack" id="viewerStack">
+            <canvas id="srcCanvas" aria-label="X-ray image preview" role="img"></canvas>
+            <canvas id="detCanvas" aria-label="Fracture detection overlay" aria-hidden="true"></canvas>
+            <canvas id="markCanvas" aria-label="Manual radiology annotation overlay"></canvas>
+          </div>
           <div class="scanline" id="scanline"></div>
+          <div id="modelLoadOverlay" class="model-load-overlay" hidden aria-hidden="true" aria-live="polite">
+            <div class="model-load-panel">
+              <div class="model-load-spin" aria-hidden="true"></div>
+              <p class="model-load-title" id="modelLoadTitle">Loading YOLOv8m…</p>
+              <p class="model-load-sub" id="modelLoadSub">Please wait…</p>
+              <div class="model-load-bar" aria-hidden="true"><div id="modelLoadBarFill"></div></div>
+              <p class="model-load-pct" id="modelLoadPct"></p>
+            </div>
+          </div>
         </div>
       </label>
       <input type="file" id="fileInput" accept="image/*,.dcm,application/dicom"/>
+
+      <!-- Radiology workstation tools -->
+      <section class="workstation" aria-label="Medical image editing workstation">
+        <div class="ws-hd">
+          <div>
+            <div class="ws-title" data-i18n="wsTitle">Image Workstation</div>
+            <span class="ws-state" id="wsState" data-i18n="wsLocked">Locked · select Zoom/Pan to enable wheel zoom.</span>
+          </div>
+          <button class="tool-btn warn" id="btnHideAI" type="button" onclick="APP.toggleAI()" disabled>
+            ◎ <span data-i18n="hideAI">Hide AI</span>
+          </button>
+        </div>
+        <div class="tool-grid">
+          <button class="tool-btn active" id="toolLock" type="button" onclick="APP.setTool('lock')" disabled>🔒 <span data-i18n="toolLock">Lock</span></button>
+          <button class="tool-btn" id="toolZoom" type="button" onclick="APP.setTool('zoom')" disabled>⌕ <span data-i18n="toolZoom">Zoom/Pan</span></button>
+          <button class="tool-btn" id="toolMeasure" type="button" onclick="APP.setTool('measure')" disabled>↔ <span data-i18n="toolMeasure">Measure</span></button>
+          <button class="tool-btn" id="toolPen" type="button" onclick="APP.setTool('pen')" disabled>✎ <span data-i18n="toolPen">Pen</span></button>
+          <button class="tool-btn" id="btnUndoMark" type="button" onclick="APP.undoMark()" disabled>↶ <span data-i18n="undo">Undo</span></button>
+          <button class="tool-btn" id="btnClearMarks" type="button" onclick="APP.clearMarks()" disabled>⌫ <span data-i18n="clearMarks">Clear Marks</span></button>
+          <button class="tool-btn" id="btnResetView" type="button" onclick="APP.resetView()" disabled>⛶ <span data-i18n="resetView">Reset View</span></button>
+          <button class="tool-btn" id="btnInvert" type="button" onclick="APP.toggleInvert()" disabled>◐ <span data-i18n="invert">Invert</span></button>
+        </div>
+        <div class="adjust-grid">
+          <label class="adjust">
+            <span data-i18n="windowLevel">Window</span>
+            <input id="windowSlider" type="range" min="-60" max="60" value="0" step="5" oninput="APP.setWindowing()" disabled>
+            <output id="windowVal">0</output>
+          </label>
+          <label class="adjust">
+            <span data-i18n="contrast">Contrast</span>
+            <input id="contrastSlider" type="range" min="70" max="170" value="100" step="5" oninput="APP.setWindowing()" disabled>
+            <output id="contrastVal">100</output>
+          </label>
+        </div>
+        <div class="measure-readout" id="measureReadout" data-i18n="measureHint">Load an image, then choose Measure or Pen. Measurement uses image pixels unless DICOM spacing is available.</div>
+      </section>
 
       <!-- X-ray warning -->
       <div class="xray-warn" id="xrayWarn">
@@ -602,7 +693,7 @@ input[type=file]{display:none}
   </div>
 
   <!-- RIGHT — PIPELINE -->
-  <div class="card">
+  <div class="card" id="aiPanel">
     <div class="card-hd">
       <div class="step-num" id="rStep" style="background:var(--border2);color:var(--fg3)">2</div>
       <span data-i18n="pipeline">Detection Pipeline</span>
@@ -971,6 +1062,45 @@ const I18N={
     abClf:'<strong>分类 (MultiTask Net)</strong>: Siamese EfficientNet-B3 双输入 + 3 任务头(位置·方向·形态学) + EdgeGuidedAttention 拓扑门控 + Uncertainty-Weighted Loss。位置 acc <strong>92%</strong>,方向 acc <strong>86%</strong>。',
   }
 };
+Object.assign(I18N.en,{
+  wsTitle:'Image Workstation',wsLocked:'Locked · select Zoom/Pan to enable wheel zoom.',
+  hideAI:'Hide AI',showAI:'Show AI',toolLock:'Lock',toolZoom:'Zoom/Pan',
+  toolMeasure:'Measure',toolPen:'Pen',undo:'Undo',clearMarks:'Clear Marks',
+  resetView:'Reset View',invert:'Invert',windowLevel:'Window',contrast:'Contrast',
+  measureHint:'Load an image, then choose Measure or Pen. Measurement uses image pixels unless DICOM spacing is available.',
+  wsZoom:'Zoom/Pan · mouse wheel zooms here, drag pans the image.',
+  wsMeasure:'Measure · drag a line to measure in image pixels.',
+  wsPen:'Pen · drag to draw manual marks.',
+  wsLockedReady:'Locked · wheel scrolls the page, image cannot be edited.',
+  aiHidden:'AI overlay and analysis are hidden for clean manual review.',
+  aiShown:'AI overlay and analysis are visible.'
+});
+Object.assign(I18N.zh,{
+  wsTitle:'医学影像工作站',wsLocked:'已锁定 · 点缩放/平移后滚轮才缩放图像。',
+  hideAI:'隐藏 AI',showAI:'显示 AI',toolLock:'锁定',toolZoom:'缩放/平移',
+  toolMeasure:'测量线',toolPen:'画笔',undo:'撤销',clearMarks:'清标注',
+  resetView:'复位视图',invert:'反相',windowLevel:'窗位',contrast:'对比度',
+  measureHint:'导入图像后可选择测量线或画笔。无 DICOM 间距时以图像像素显示。',
+  wsZoom:'缩放/平移 · 只有此模式下滚轮缩放图像，拖拽可平移。',
+  wsMeasure:'测量线 · 拖拽画线，显示图像像素长度。',
+  wsPen:'画笔 · 拖拽添加手工阅片标注。',
+  wsLockedReady:'已锁定 · 滚轮正常滚动页面，图像不可编辑。',
+  aiHidden:'AI 叠加层和分析面板已隐藏，方便手工阅片编辑。',
+  aiShown:'AI 叠加层和分析面板已显示。'
+});
+Object.assign(I18N.ko,{
+  wsTitle:'영상 판독 워크스테이션',wsLocked:'잠김 · 확대/이동을 선택해야 휠 줌이 됩니다.',
+  hideAI:'AI 숨김',showAI:'AI 표시',toolLock:'잠금',toolZoom:'확대/이동',
+  toolMeasure:'측정선',toolPen:'펜',undo:'되돌리기',clearMarks:'표시 삭제',
+  resetView:'보기 초기화',invert:'반전',windowLevel:'윈도우',contrast:'대비',
+  measureHint:'이미지를 불러온 뒤 측정선 또는 펜을 선택하세요. DICOM 간격이 없으면 픽셀 단위로 표시됩니다.',
+  wsZoom:'확대/이동 · 이 모드에서만 휠로 확대하고 드래그로 이동합니다.',
+  wsMeasure:'측정선 · 드래그하여 이미지 픽셀 길이를 측정합니다.',
+  wsPen:'펜 · 드래그하여 수동 판독 표시를 추가합니다.',
+  wsLockedReady:'잠김 · 휠은 페이지 스크롤로 동작하고 이미지는 편집되지 않습니다.',
+  aiHidden:'AI 오버레이와 분석 패널을 숨겼습니다.',
+  aiShown:'AI 오버레이와 분석 패널을 표시합니다.'
+});
 let LANG='zh';
 function t(k){ return (I18N[LANG]||I18N.en)[k]||(I18N.en[k]||k); }
 function setLang(l){
@@ -991,8 +1121,12 @@ function openModal(id){document.getElementById(id).classList.add('open');}
 function closeM(id){document.getElementById(id).classList.remove('open');}
 function closeMBg(e,id){if(e.target===document.getElementById(id))closeM(id);}
 function selectModel(m){
-  // Only lite available in browser
-  document.getElementById('optLite').classList.toggle('active',m==='lite');
+  if (typeof window.switchModel === 'function') {
+    window.switchModel(m);
+    return;
+  }
+  document.getElementById('optLite')?.classList.toggle('active', m === 'lite');
+  document.getElementById('optFull')?.classList.toggle('active', m === 'full');
 }
 function setPipeStep(n){
   // n=0:none, 1:upload done, 2:screening, 3:done or fail
@@ -1013,7 +1147,10 @@ function setStage(id,state){// state: idle|active|done|fail
 }
 function setScanline(on){document.getElementById('scanline').classList.toggle('on',on);}
 function setRunSts(msg,cls=''){const e=document.getElementById('runSts');e.textContent=msg;e.className='run-sts'+(cls?' '+cls:'');}
-function setExport(on){['btnPNG','btnPDF','btnHeatmap','btnClear'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=!on;});}
+function setExport(on){
+  ['btnPNG','btnPDF','btnHeatmap','btnClear','btnHideAI','toolLock','toolZoom','toolMeasure','toolPen','btnUndoMark','btnClearMarks','btnResetView','btnInvert','windowSlider','contrastSlider']
+    .forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=!on;});
+}
 </script>
 
 <!-- ORT loader — version-pinned CDN (jsDelivr, cached globally) -->
@@ -1021,7 +1158,7 @@ function setExport(on){['btnPNG','btnPDF','btnHeatmap','btnClear'].forEach(id=>{
         crossorigin="anonymous"
         onload="window._ortFromCDN=true"></script>
 <!-- Multi-Task classifier wrapper (window.MTL) — must load BEFORE app.js -->
-<script src="./mtl_inference.js?v=6-calibration"></script>
-<script src="./app.js?v=14.3-numbers-honest"></script>
+<script src="./mtl_inference.js?v=2026-06-01-mtl-blue"></script>
+<script src="./app.js?v=2026-06-01-mtl-blue"></script>
 </body>
 </html>

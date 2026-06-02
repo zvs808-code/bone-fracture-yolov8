@@ -9,3 +9,6 @@ build/
 Thumbs.db
 # Large model files — use Git LFS
 # *.onnx
+
+.netlify_token
+

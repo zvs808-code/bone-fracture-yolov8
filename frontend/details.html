@@ -4,32 +4,36 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
 <meta name="description" content="Technical overview — Multi-Task Context-Aware Bone Fracture Diagnostic System."/>
-<meta name="theme-color" content="#07101f"/>
+<meta name="theme-color" content="#020408"/>
 <title>项目详情 · Bone Fracture Detector</title>
+<link rel="stylesheet" href="./reading-room-theme.css?v=2026-06-01-mtl-blue"/>
 <style>
 :root{
-  --bg:#07101f;--bg2:#0c1629;--panel:#111b30;
-  --border:#2a3a5a;--border2:#3d5078;
-  --fg:#f0f5ff;--fg2:#b8c5dc;--fg3:#8a9ab5;
-  --accent:#5b9eff;--accent2:#3d85ff;
-  --good:#4ade80;--warn:#fbbf24;--bad:#f87171;
-  --scan:#00d4ff;
+  --bg:#050706;--bg2:#0a0f0e;--panel:#101615;
+  --border:#263a36;--border2:#3a514b;
+  --fg:#eef7f4;--fg2:#b9c9c4;--fg3:#7f918c;
+  --accent:#45d6c6;--accent2:#9bdc65;
+  --good:#62d47f;--warn:#e8b85a;--bad:#ff6b6b;
+  --scan:#6fffe9;
   --r:14px;--rs:8px;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
 html,body{overscroll-behavior:none}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
-  background:var(--bg);color:var(--fg);min-height:100vh;line-height:1.7;
+  background:
+    linear-gradient(90deg,rgba(69,214,198,.035) 1px,transparent 1px) 0 0/48px 48px,
+    linear-gradient(180deg,#050706 0%,#07100e 46%,#050706 100%);
+  color:var(--fg);min-height:100vh;line-height:1.7;
   padding-top:env(safe-area-inset-top)}
 
 /* NAV */
-nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
+nav{position:sticky;top:0;z-index:200;background:rgba(5,7,6,.94);
   backdrop-filter:blur(12px);border-bottom:1px solid var(--border);
   padding:0 20px;height:54px;display:flex;align-items:center;
   justify-content:space-between;gap:10px}
 .nav-logo{display:flex;align-items:center;gap:9px;font-size:15px;
   font-weight:700;color:var(--fg);text-decoration:none}
-.nav-icon{width:32px;height:32px;background:linear-gradient(135deg,#1a5ce5,#00d4ff);
+.nav-icon{width:32px;height:32px;background:linear-gradient(135deg,#18342f,#45d6c6 55%,#9bdc65);
   border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px}
 .nav-right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .lang-grp{display:flex;border:1px solid var(--border2);border-radius:5px;overflow:hidden}
@@ -38,9 +42,9 @@ nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
 .lang-btn.active{background:var(--accent);color:#fff}
 .nav-lnk{padding:5px 10px;font-size:11px;color:var(--fg2);background:transparent;
   border:1px solid var(--border2);border-radius:5px;cursor:pointer;text-decoration:none}
-.nav-lnk:hover{color:var(--fg);background:#1a2540}
-.nav-lnk.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
-.nav-lnk.primary:hover{background:var(--accent2);color:#fff}
+.nav-lnk:hover{color:var(--fg);background:#12201d}
+.nav-lnk.primary{background:var(--accent);color:#03100e;border-color:var(--accent)}
+.nav-lnk.primary:hover{background:var(--accent2);color:#03100e}
 @media (max-width:640px){
   nav{padding:0 12px;gap:6px}
   .nav-logo span{font-size:13px}
@@ -49,16 +53,16 @@ nav{position:sticky;top:0;z-index:200;background:rgba(7,16,31,.94);
 
 /* HERO band */
 .hero{background:
-  radial-gradient(60% 80% at 50% 0%, rgba(91,158,255,.18), transparent 70%),
-  linear-gradient(180deg, #0a1428 0%, #07101f 100%);
+  linear-gradient(90deg,rgba(69,214,198,.05) 1px,transparent 1px) 0 0/42px 42px,
+  linear-gradient(180deg,#0d1513 0%,#050706 100%);
   padding:48px 18px 38px;text-align:center;border-bottom:1px solid var(--border)}
 .hero-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;
-  background:rgba(91,158,255,.10);border:1px solid rgba(91,158,255,.30);
+  background:rgba(69,214,198,.10);border:1px solid rgba(69,214,198,.30);
   border-radius:99px;font-size:11px;color:var(--accent);font-weight:600;
   margin-bottom:16px;letter-spacing:.3px}
 .hero h1{font-size:clamp(24px,4vw,36px);font-weight:800;line-height:1.15;
   letter-spacing:-.5px;margin-bottom:10px;
-  background:linear-gradient(135deg,#fff 0%,#a5c8ff 50%,#5b9eff 100%);
+  background:linear-gradient(135deg,#fff 0%,#c8fff5 52%,#45d6c6 100%);
   -webkit-background-clip:text;background-clip:text;color:transparent}
 .hero p{font-size:14px;color:var(--fg2);max-width:760px;margin:0 auto;line-height:1.65}
 .hero .author{margin-top:18px;font-size:11px;color:var(--fg3);letter-spacing:.5px}
@@ -77,8 +81,8 @@ section > h2 .em{color:var(--accent);font-size:14px;font-weight:500;
   margin-left:auto;letter-spacing:.5px}
 p{color:var(--fg2);margin:10px 0;font-size:14px}
 strong{color:var(--fg)}
-code{background:#0c1629;padding:1px 6px;border-radius:4px;font-size:.85em;
-  color:#a5c8ff;border:1px solid var(--border)}
+code{background:#0b1110;padding:1px 6px;border-radius:4px;font-size:.85em;
+  color:#bdf7ed;border:1px solid var(--border)}
 
 /* Cards & grid */
 .kgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:14px 0}
@@ -96,12 +100,12 @@ code{background:#0c1629;padding:1px 6px;border-radius:4px;font-size:.85em;
 .arch{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
   padding:18px;margin:18px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   font-size:12px;color:var(--fg2);line-height:1.9;overflow-x:auto}
-.arch .block{display:inline-block;padding:6px 12px;background:#0c1629;
+.arch .block{display:inline-block;padding:6px 12px;background:#0b1110;
   border:1px solid var(--border2);border-radius:6px;color:var(--fg);
   font-weight:600;margin:2px}
-.arch .accent{border-color:var(--accent);background:rgba(91,158,255,.10);color:var(--accent)}
-.arch .gold{border-color:var(--warn);background:rgba(251,191,36,.10);color:var(--warn)}
-.arch .good{border-color:var(--good);background:rgba(74,222,128,.10);color:var(--good)}
+.arch .accent{border-color:var(--accent);background:rgba(69,214,198,.10);color:var(--accent)}
+.arch .gold{border-color:var(--warn);background:rgba(232,184,90,.10);color:var(--warn)}
+.arch .good{border-color:var(--good);background:rgba(98,212,127,.10);color:var(--good)}
 .arch .arr{color:var(--fg3);margin:0 6px}
 
 /* Pipeline steps */
@@ -110,22 +114,22 @@ code{background:#0c1629;padding:1px 6px;border-radius:4px;font-size:.85em;
   border-radius:var(--rs);padding:14px 16px;transition:all .2s;position:relative}
 .step:hover{border-color:var(--accent);transform:translateX(2px)}
 .step .si{width:42px;height:42px;border-radius:50%;
-  background:linear-gradient(135deg,#1a5ce5,#00d4ff);
+  background:linear-gradient(135deg,#18342f,#45d6c6);
   display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
 .step .sb{flex:1}
 .step .st{font-size:14px;font-weight:700;color:var(--fg);margin-bottom:3px}
 .step .sd{font-size:12px;color:var(--fg2);line-height:1.6}
 .step .sm{font-size:11px;color:var(--fg3);margin-top:6px;
   display:flex;gap:8px;flex-wrap:wrap}
-.step .sm span{padding:1px 8px;background:#0c1629;border-radius:99px;border:1px solid var(--border)}
+.step .sm span{padding:1px 8px;background:#0b1110;border-radius:99px;border:1px solid var(--border)}
 
 /* Pills */
 .pills{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
 .pill{padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;
-  background:#0c1629;color:var(--fg2);border:1px solid var(--border)}
-.pill.good{background:rgba(74,222,128,.10);color:var(--good);border-color:rgba(74,222,128,.3)}
-.pill.warn{background:rgba(251,191,36,.10);color:var(--warn);border-color:rgba(251,191,36,.3)}
-.pill.acc {background:rgba(91,158,255,.10);color:var(--accent);border-color:rgba(91,158,255,.3)}
+  background:#0b1110;color:var(--fg2);border:1px solid var(--border)}
+.pill.good{background:rgba(98,212,127,.10);color:var(--good);border-color:rgba(98,212,127,.3)}
+.pill.warn{background:rgba(232,184,90,.10);color:var(--warn);border-color:rgba(232,184,90,.3)}
+.pill.acc {background:rgba(69,214,198,.10);color:var(--accent);border-color:rgba(69,214,198,.3)}
 
 /* Rule cards */
 .rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:14px 0}
@@ -159,11 +163,11 @@ code{background:#0c1629;padding:1px 6px;border-radius:4px;font-size:.85em;
 .tl-d{font-size:12px;color:var(--fg2);line-height:1.55}
 
 /* Footer */
-footer{background:#0a0f1e;border-top:1px solid var(--border);padding:22px 18px;
+footer{background:#060908;border-top:1px solid var(--border);padding:22px 18px;
   text-align:center;font-size:11px;color:var(--fg3);line-height:1.7}
 footer .author-tag{color:var(--fg2);font-weight:600}
 footer .ver{display:inline-block;padding:1px 8px;border-radius:99px;
-  background:#0c1629;border:1px solid var(--border);margin:0 4px;
+  background:#0b1110;border:1px solid var(--border);margin:0 4px;
   font-family:ui-monospace,monospace;font-size:10px}
 </style>
 </head>
@@ -171,7 +175,7 @@ footer .ver{display:inline-block;padding:1px 8px;border-radius:99px;
 
 <!-- NAV -->
 <nav>
-  <a class="nav-logo" href="./">
+  <a class="nav-logo" href="./index.html">
     <div class="nav-icon">🦴</div>
     <span data-i18n="siteTitle">Bone Fracture Detector</span>
   </a>
@@ -181,7 +185,7 @@ footer .ver{display:inline-block;padding:1px 8px;border-radius:99px;
       <button class="lang-btn" id="le" onclick="setLang('en')">EN</button>
       <button class="lang-btn active" id="lz" onclick="setLang('zh')">中</button>
     </div>
-    <a class="nav-lnk primary" href="./" data-i18n="backToApp">← 返回应用</a>
+    <a class="nav-lnk primary" href="./index.html" data-i18n="backToApp">← 返回应用</a>
   </div>
 </nav>
 

@@ -1,5 +1,5 @@
-/* ============================================================================
- * mtl_inference.js — Browser-side wrapper for MultiTaskFractureNet ONNX
+﻿/* ============================================================================
+ * mtl_inference.js ??Browser-side wrapper for MultiTaskFractureNet ONNX
  *                    + Clinical Expert System (mirrors Python inference_engine.py)
  *
  * The MTL model takes TWO image tensors (local ROI + global X-ray) and returns
@@ -10,14 +10,14 @@
  *   global_image   Float32 [1, 3, 224, 224]   full image, same normalization
  *
  * Outputs:
- *   location       Float32 [1]            BCE logit  (sigmoid > 0.5 → Joint else Shaft)
+ *   location       Float32 [1]            BCE logit  (sigmoid > 0.5 ??Joint else Shaft)
  *   direction      Float32 [1, 3]         3-way logits (0=Transverse,1=Oblique,2=Longitudinal)
  *   morphology     Float32 [1, 2]         multi-label logits ([Displaced, Comminuted])
- *   fragment_att   Float32 [1, 1]         in [0,1] — fragment evidence gate
+ *   fragment_att   Float32 [1, 1]         in [0,1] ??fragment evidence gate
  *   edge_map       Float32 [1, 1, H, W]   Sobel edge visualization
  *
  * This file is loaded via classic <script> tag in index.html AFTER ort.min.js,
- * so it just declares everything on window.MTL — no module system needed.
+ * so it just declares everything on window.MTL ??no module system needed.
  * ============================================================================ */
 (function () {
   'use strict';
@@ -27,7 +27,7 @@
   const MEAN       = [0.485, 0.456, 0.406];
   const STD        = [0.229, 0.224, 0.225];
 
-  // ── Clinical thresholds (MUST match Python inference_engine.py defaults) ───
+  // ?? Clinical thresholds (MUST match Python inference_engine.py defaults) ???
   const THRESHOLDS = {
     loc_shaft_lock:      0.15,  // Rule 1: joint_prob below this = "definitely shaft"
     comm_high:           0.65,  // Rule 2a: strong comminuted floor
@@ -38,7 +38,7 @@
     fragment_att_warn:   0.50,
   };
 
-  // ── Status codes (mirrors Python Status) ────────────────────────────────────
+  // ?? Status codes (mirrors Python Status) ????????????????????????????????????
   const STATUS = {
     NORMAL_DISPLACED:      200,  // calibrated: standard displaced shaft fracture
     COMMINUTED:            201,
@@ -56,24 +56,24 @@
     203: 'STATUS_AVULSION_DETECTED',
   };
 
-  // ── i18n strings ────────────────────────────────────────────────────────────
+  // ?? i18n strings ????????????????????????????????????????????????????????????
   const I18N = {
     ko: {
-      location:   { 0: '골간(Shaft)',     1: '관절부(Joint)' },
-      direction:  { 0: '횡상(Transverse)', 1: '사상(Oblique)', 2: '종상(Longitudinal)' },
-      displaced:  { yes: '전위 있음',       no: '전위 없음' },
-      comminuted: { yes: '분쇄 있음',       no: '분쇄 없음' },
-      noFragment: '독립 골편 증거 약함 — 분쇄 진단 신뢰도 낮음',
-      withDisp:   '전위 동반',
-      comminutedClass: '분쇄성 골절',
-      ruleNames: { shaftLock: '골간 잠금', strongComm: '강한 분쇄 증거', ambigComm: '경계 경고', collapseTrans: '횡상 수렴', defaultClear: '명확 판정', lowConf: '저신뢰 재검토' },
+      location:   { 0: '怨④컙(Shaft)',     1: '愿?덈?(Joint)' },
+      direction:  { 0: '?≪긽(Transverse)', 1: '?ъ긽(Oblique)', 2: '醫낆긽(Longitudinal)' },
+      displaced:  { yes: '?꾩쐞 ?덉쓬',       no: '?꾩쐞 ?놁쓬' },
+      comminuted: { yes: '遺꾩뇙 ?덉쓬',       no: '遺꾩뇙 ?놁쓬' },
+      noFragment: '?낅┰ 怨⑦렪 利앷굅 ?쏀븿 ??遺꾩뇙 吏꾨떒 ?좊ː????쓬',
+      withDisp:   '?꾩쐞 ?숇컲',
+      comminutedClass: '遺꾩뇙??怨⑥젅',
+      ruleNames: { shaftLock: '怨④컙 ?좉툑', strongComm: '媛뺥븳 遺꾩뇙 利앷굅', ambigComm: '寃쎄퀎 寃쎄퀬', collapseTrans: '?≪긽 ?섎졃', defaultClear: '紐낇솗 ?먯젙', lowConf: '??좊ː ?ш??? },
       calib: {
-        highRiskClass: '중증 사상 분쇄성 골절(중증 전위 동반)',
-        avulsionClass: '관절내 횡형 견열 골절(전위 동반)',
-        normalDispClass: '사상 골절 · 골간(전위 동반)',
-        highRiskPrompt: 'AI 판정:**중증 사상 분쇄성 골절**. 나비형 골편(butterfly fragment) 가능성이 높습니다. **물리치료 금기** — 정복·내고정 전 적극적 수술적 고정 및 신경혈관 상태 평가를 우선하십시오.',
-        avulsionPrompt: 'AI 판정:**관절내 횡형 견열 골절**. 힘줄/인대 견인에 의한 골편 이탈 패턴입니다. 견열부 고정 및 인대 손상 평가가 필요하며, 분쇄 확률은 경계 거칠기 노이즈로 억제되었습니다.',
-        normalDispPrompt: 'AI 판정:**일반 골간 전위 골절**. 분쇄 신호는 억제되었으며, 주 병변은 횡형/전위 패턴입니다. 석고/내고정 후 **일상적 재활** 프로토콜을 따를 수 있습니다.',
+        highRiskClass: '以묒쬆 ?ъ긽 遺꾩뇙??怨⑥젅(以묒쬆 ?꾩쐞 ?숇컲)',
+        avulsionClass: '愿?덈궡 ?≫삎 寃ъ뿴 怨⑥젅(?꾩쐞 ?숇컲)',
+        normalDispClass: '?ъ긽 怨⑥젅 쨌 怨④컙(?꾩쐞 ?숇컲)',
+        highRiskPrompt: 'AI ?먯젙:**以묒쬆 ?ъ긽 遺꾩뇙??怨⑥젅**. ?섎퉬??怨⑦렪(butterfly fragment) 媛?μ꽦???믪뒿?덈떎. **臾쇰━移섎즺 湲덇린** ???뺣났쨌?닿퀬?????곴레???섏닠??怨좎젙 諛??좉꼍?덇? ?곹깭 ?됯?瑜??곗꽑?섏떗?쒖삤.',
+        avulsionPrompt: 'AI ?먯젙:**愿?덈궡 ?≫삎 寃ъ뿴 怨⑥젅**. ?섏쨪/?몃? 寃ъ씤???섑븳 怨⑦렪 ?댄깉 ?⑦꽩?낅땲?? 寃ъ뿴遺 怨좎젙 諛??몃? ?먯긽 ?됯?媛 ?꾩슂?섎ŉ, 遺꾩뇙 ?뺣쪧? 寃쎄퀎 嫄곗튌湲??몄씠利덈줈 ?듭젣?섏뿀?듬땲??',
+        normalDispPrompt: 'AI ?먯젙:**?쇰컲 怨④컙 ?꾩쐞 怨⑥젅**. 遺꾩뇙 ?좏샇???듭젣?섏뿀?쇰ŉ, 二?蹂묐?? ?≫삎/?꾩쐞 ?⑦꽩?낅땲?? ?앷퀬/?닿퀬????**?쇱긽???ы솢** ?꾨줈?좎퐳???곕? ???덉뒿?덈떎.',
       },
     },
     en: {
@@ -81,7 +81,7 @@
       direction:  { 0: 'Transverse',    1: 'Oblique', 2: 'Longitudinal' },
       displaced:  { yes: 'Displaced',   no: 'Non-displaced' },
       comminuted: { yes: 'Comminuted',  no: 'Not comminuted' },
-      noFragment: 'No independent fragment evidence — low confidence in Comminuted',
+      noFragment: 'No independent fragment evidence ??low confidence in Comminuted',
       withDisp:   'with displacement',
       comminutedClass: 'Comminuted fracture',
       ruleNames: { shaftLock: 'Shaft lock', strongComm: 'Strong comminuted', ambigComm: 'Ambiguous warning', collapseTrans: 'Collapse to transverse', defaultClear: 'Default clear', lowConf: 'Low-confidence flag' },
@@ -89,38 +89,38 @@
         highRiskClass: 'Severe oblique comminuted fracture (severe displacement)',
         avulsionClass: 'Intra-articular transverse avulsion (with displacement)',
         normalDispClass: 'Shaft fracture with displacement (non-comminuted)',
-        highRiskPrompt: 'AI verdict: **Severe oblique comminuted fracture**. High likelihood of butterfly fragment. **Strict contraindication for physical therapy** — prioritize ORIF and neurovascular assessment before rehab.',
+        highRiskPrompt: 'AI verdict: **Severe oblique comminuted fracture**. High likelihood of butterfly fragment. **Strict contraindication for physical therapy** ??prioritize ORIF and neurovascular assessment before rehab.',
         avulsionPrompt: 'AI verdict: **Intra-articular transverse avulsion fracture**. Pattern consistent with tendon/ligament traction avulsion. Secure fixation and ligament evaluation required; comminuted probability suppressed as border roughness noise.',
         normalDispPrompt: 'AI verdict: **Standard displaced diaphyseal fracture**. Comminuted signal suppressed; primary pattern is displacement/transverse. Follow routine post-immobilization rehabilitation protocol.',
       },
     },
     zh: {
-      location:   { 0: '骨干',           1: '关节' },
-      direction:  { 0: '横形',           1: '斜形', 2: '纵形' },
-      displaced:  { yes: '移位',         no: '无明显移位' },
-      comminuted: { yes: '粉碎',         no: '非粉碎' },
-      noFragment: '未见独立游离骨片 — 粉碎判定低置信',
-      withDisp:   '伴移位',
-      comminutedClass: '粉碎性骨折',
-      ruleNames: { shaftLock: '骨干锁定', strongComm: '强粉碎证据', ambigComm: '边界警告', collapseTrans: '收敛为横形', defaultClear: '明确判定', lowConf: '低置信复审' },
+      location:   { 0: '謠ⓨ묾',           1: '?녘뒄' },
+      direction:  { 0: '與ゅ숱',           1: '?쒎숱', 2: '瀛드숱' },
+      displaced:  { yes: '燁삡퐤',         no: '?졿삇?양㎉鵝? },
+      comminuted: { yes: '暎됬쥙',         no: '?욅쾳閻? },
+      noFragment: '?よ쭅?х쳦歷며┿謠①뎴 ??暎됬쥙?ㅵ츣鵝롧쉰岳?,
+      withDisp:   '鴉당㎉鵝?,
+      comminutedClass: '暎됬쥙?㏝え??,
+      ruleNames: { shaftLock: '謠ⓨ묾?곩츣', strongComm: '凉븀쾳閻롨칮??, ambigComm: '渦밭븣鈺?몜', collapseTrans: '?뜻븲訝뷸Ø壤?, defaultClear: '?롧‘?ㅵ츣', lowConf: '鵝롧쉰岳▼쨳若? },
       calib: {
-        highRiskClass: '严重斜形粉碎性骨折（伴重度移位）',
-        avulsionClass: '关节内横形撕脱骨折（伴移位）',
-        normalDispClass: '骨干移位骨折（非粉碎）',
-        highRiskPrompt: 'AI 判定:**严重斜形粉碎性骨折**。高度怀疑蝶形骨片(butterfly fragment)。**物理治疗严格禁忌** — 须优先评估切开复位内固定(ORIF)及神经血管状态,禁止在骨折未稳定前进行康复训练。',
-        avulsionPrompt: 'AI 判定:**关节内横形撕脱骨折**。符合肌腱/韧带牵拉撕脱模式,需评估撕脱块固定及韧带损伤;粉碎概率已按边界毛糙噪声抑制。',
-        normalDispPrompt: 'AI 判定:**标准骨干移位骨折**。已抑制粉碎均值收敛噪声,主征象为移位/横形骨折。石膏或内固定后可按**常规制动后康复**流程处理。',
+        highRiskClass: '訝ι뇥?쒎숱暎됬쥙?㏝え?섓펷鴉닻뇥佯?㎉鵝랃펹',
+        avulsionClass: '?녘뒄?끾Ø壤€뮆?깁え?섓펷鴉당㎉鵝랃펹',
+        normalDispClass: '謠ⓨ묾燁삡퐤謠ⓩ뒛竊덆씆暎됬쥙竊?,
+        highRiskPrompt: 'AI ?ㅵ츣:**訝ι뇥?쒎숱暎됬쥙?㏝え??*?귡쳵佯??묋씢壤?え??butterfly fragment)??*?⑴릤亦사뼏訝ζ졏獵곩퓣** ??窈삡폍?덅칱鴉겼늾凉鸚띴퐤?끻쎓若?ORIF)?딁쪥瀯뤺?嶸←듁??獵곫??③え?섉쑋葉녑츣?띹퓵烏뚦볜鸚띹?瀯껁?,
+        avulsionPrompt: 'AI ?ㅵ츣:**?녘뒄?끾Ø壤€뮆?깁え??*?귞Е?덅굦???㎩를?득땳?뺠꽦與▼폀,?瑥꾡섟?뺠꽦?쀥쎓若싧룋?㎩를?잋샴;暎됬쥙礖귞럤藥꿩뙃渦밭븣驪쏁퀥?ゅ０?묈댍??,
+        normalDispPrompt: 'AI ?ㅵ츣:**?뉐뇛謠ⓨ묾燁삡퐤謠ⓩ뒛**?귛럴?묈댍暎됬쥙?뉐쇗뵸?쎾솵鶯?訝삣푳穩▽맏燁삡퐤/與ゅ숱謠ⓩ뒛?귞윹?뤸닑?끻쎓若싧릮??뙃**躍멱쭊?뜹뒯?롥볜鸚?*役곭쮮鸚꾤릤??,
       },
     },
   };
 
-  // ── Internal state ──────────────────────────────────────────────────────────
+  // ?? Internal state ??????????????????????????????????????????????????????????
   let _session = null;
   let _loading = false;
   let _failed  = false;
   let _backend = null;
 
-  // ── Math helpers ────────────────────────────────────────────────────────────
+  // ?? Math helpers ????????????????????????????????????????????????????????????
   function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
   function softmax(arr) {
     const m = Math.max.apply(null, arr);
@@ -129,8 +129,8 @@
     return ex.map(v => v / s);
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Load ONNX with WebGPU → WebGL → WASM fallback
+  // ???????????????????????????????????????????????????????????????????????????
+  // Load ONNX with WebGPU ??WebGL ??WASM fallback
   async function loadMTL(onProgress) {
     if (_session || _loading) return _session;
     _loading = true;
@@ -167,7 +167,7 @@
     }
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
+  // ???????????????????????????????????????????????????????????????????????????
   // Crop helpers
   function cropBox(bitmap, det, padFrac) {
     padFrac = (typeof padFrac === 'number') ? padFrac : 0.15;
@@ -201,7 +201,7 @@
     return out;
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
+  // ???????????????????????????????????????????????????????????????????????????
   // Forward pass + decode + expert rules in one call
   async function classifyDetection(bitmap, det, padFrac) {
     if (!_session) await loadMTL();
@@ -220,8 +220,8 @@
     return decoded;
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Decode raw ONNX outputs → structured result (mirrors Python decode_outputs).
+  // ???????????????????????????????????????????????????????????????????????????
+  // Decode raw ONNX outputs ??structured result (mirrors Python decode_outputs).
   function decode(rawOutputs) {
     const locLogit  = rawOutputs.location.data[0];
     const locProbJoint = sigmoid(locLogit);
@@ -242,7 +242,7 @@
     const commProb_gated = commProb_raw * fragmentAtt;
 
     return {
-      // ── Backward-compat shape (used by app.js renderClassification) ──
+      // ?? Backward-compat shape (used by app.js renderClassification) ??
       location:   { idx: locIdx, prob: locProbJoint, conf: locConf },
       direction:  { idx: dirIdx, probs: dirProbs, conf: dirConf },
       morphology: {
@@ -252,7 +252,7 @@
       },
       fragment_att: fragmentAtt,
 
-      // ── New ECharts-ready structured shape (mirrors Python API) ──
+      // ?? New ECharts-ready structured shape (mirrors Python API) ??
       task_location: {
         shaft_prob: locProbShaft,
         joint_prob: locProbJoint,
@@ -272,12 +272,10 @@
     };
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // CONFIDENCE CALIBRATION & FEATURE LINKING MATRIX
+  // ?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧??  // CONFIDENCE CALIBRATION & FEATURE LINKING MATRIX
   // Realigns raw morphology logits with radiological logic (mean-convergence fix).
   // Runs immediately after decode(), before executeExpertRules().
-  // ═══════════════════════════════════════════════════════════════════════════
-  function applyConfidenceCalibration(decoded) {
+  // ?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧??  function applyConfidenceCalibration(decoded) {
     const loc = decoded.task_location;
     const dir = decoded.task_direction;
     const morph = decoded.task_morphology;
@@ -293,19 +291,19 @@
     let comminuted_cal = morph.comminuted_prob_gated;
     let preset = null;
 
-    // 1) Long-bone oblique displaced high-energy → elevate true comminuted
+    // 1) Long-bone oblique displaced high-energy ??elevate true comminuted
     if (dir_oblique > 0.85 && displacement_prob > 0.95 && location_shaft > 0.90) {
       if (comminuted_raw >= 0.45) {
         comminuted_cal = 0.82;
         preset = 'high_risk_comminuted';
       }
     }
-    // 2) Intra-articular avulsion → suppress comminuted border noise
+    // 2) Intra-articular avulsion ??suppress comminuted border noise
     else if (location_joint > 0.85 && dir_transverse > 0.80) {
       comminuted_cal = 0.24;
       preset = 'avulsion';
     }
-    // 3) Standard non-comminuted displaced shaft → suppress ambiguous comm band
+    // 3) Standard non-comminuted displaced shaft ??suppress ambiguous comm band
     else if (location_shaft > 0.85 && comminuted_raw < 0.60 && dir_oblique < 0.70) {
       comminuted_cal = 0.28;
       preset = 'normal_displaced';
@@ -379,10 +377,8 @@
     };
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // EXPERT SYSTEM — clinical post-processing (mirrors Python execute_expert_rules)
-  // ═══════════════════════════════════════════════════════════════════════════
-  function executeExpertRules(decoded, lang) {
+  // ?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧??  // EXPERT SYSTEM ??clinical post-processing (mirrors Python execute_expert_rules)
+  // ?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧?먥븧??  function executeExpertRules(decoded, lang) {
     lang = lang || 'zh';
 
     const calibrated = buildCalibrationVerdict(decoded, lang);
@@ -408,57 +404,57 @@
     const disp_prob      = decoded.task_morphology.displacement_prob;
     const comm_raw       = decoded.task_morphology.comminuted_prob_raw;
     const fragment_att   = decoded.task_morphology.fragment_attention;
-    // Calibrated prob (post matrix) when present; else gated = raw × fragment_att.
+    // Calibrated prob (post matrix) when present; else gated = raw 횞 fragment_att.
     const comm_prob      = decoded.task_morphology.comminuted_prob_calibrated != null
       ? decoded.task_morphology.comminuted_prob_calibrated
       : decoded.task_morphology.comminuted_prob_gated;
     const has_displacement = disp_prob >= T.disp_threshold;
 
-    // ── RULE 1: Shaft lock ───────────────────────────────────────────────────
+    // ?? RULE 1: Shaft lock ???????????????????????????????????????????????????
     if (is_shaft_strong) {
       forbidden_classes.push('Avulsion');
-      forbidden_classes.push(lang === 'zh' ? '撕脱骨折' : (lang === 'ko' ? '견열 골절' : 'Avulsion fracture'));
+      forbidden_classes.push(lang === 'zh' ? '?뺠꽦謠ⓩ뒛' : (lang === 'ko' ? '寃ъ뿴 怨⑥젅' : 'Avulsion fracture'));
       rules_fired.push('rule_1_shaft_lock_forbid_avulsion');
     }
 
-    // ── RULE 2: Dynamic Comminuted bands ─────────────────────────────────────
+    // ?? RULE 2: Dynamic Comminuted bands ?????????????????????????????????????
     let final_class, status_code, clinical_prompt;
-    const dispSuffix = has_displacement ? ' · ' + L.withDisp : '';
+    const dispSuffix = has_displacement ? ' 쨌 ' + L.withDisp : '';
 
     if (comm_prob >= T.comm_high) {
       // 2a) Strong comminuted
-      final_class = L.comminutedClass + ' · ' + location_name + dispSuffix;
+      final_class = L.comminutedClass + ' 쨌 ' + location_name + dispSuffix;
       status_code = STATUS.COMMINUTED;
       if (lang === 'zh') {
-        clinical_prompt = `AI 判定:**粉碎性骨折**(多碎块,raw 概率 ${Math.round(comm_raw*100)}%,碎片证据 ${Math.round(fragment_att*100)}%)。建议影像科医师确认骨片移位幅度,评估是否需要切开复位内固定(ORIF)。如合并神经血管损伤体征,优先紧急会诊。`;
+        clinical_prompt = `AI ?ㅵ츣:**暎됬쥙?㏝え??*(鸚싩쥙??raw 礖귞럤 ${Math.round(comm_raw*100)}%,閻롧뎴瑥곫뜮 ${Math.round(fragment_att*100)}%)?귛뻠溫?쉽?뤹쭛?삣툑簾??謠①뎴燁삡퐤亮끻벧,瑥꾡섟??맔?誤곩늾凉鸚띴퐤?끻쎓若?ORIF)?귛쫩?덂뭉曄욅퍘烏嶸→뜜鴉ㅴ퐪孃?鴉섇뀍榮㎪δ폏瑥듽?;
       } else if (lang === 'ko') {
-        clinical_prompt = `AI 판정:**분쇄성 골절**(다중 골편,raw ${Math.round(comm_raw*100)}%,골편 증거 ${Math.round(fragment_att*100)}%)。영상의학 전문의가 골편 전위 정도를 확인하고 절개정복내고정술(ORIF) 필요성을 평가할 것을 권장합니다.`;
+        clinical_prompt = `AI ?먯젙:**遺꾩뇙??怨⑥젅**(?ㅼ쨷 怨⑦렪,raw ${Math.round(comm_raw*100)}%,怨⑦렪 利앷굅 ${Math.round(fragment_att*100)}%)?귥쁺?곸쓽???꾨Ц?섍? 怨⑦렪 ?꾩쐞 ?뺣룄瑜??뺤씤?섍퀬 ?덇컻?뺣났?닿퀬?뺤닠(ORIF) ?꾩슂?깆쓣 ?됯???寃껋쓣 沅뚯옣?⑸땲??`;
       } else {
         clinical_prompt = `AI verdict: **Comminuted fracture** (multiple fragments, raw probability ${Math.round(comm_raw*100)}%, fragment evidence ${Math.round(fragment_att*100)}%). Radiologist should confirm fragment displacement and assess need for ORIF. Emergency consult if neurovascular signs.`;
       }
       rules_fired.push('rule_2a_comminuted_strong');
 
     } else if (comm_prob >= T.comm_mid_low) {
-      // 2b) Ambiguous range — strong warning
-      final_class = dir_name + (lang === 'zh' ? '骨折' : (lang === 'ko' ? ' 골절' : ' fracture')) + ' · ' + location_name + dispSuffix;
+      // 2b) Ambiguous range ??strong warning
+      final_class = dir_name + (lang === 'zh' ? '謠ⓩ뒛' : (lang === 'ko' ? ' 怨⑥젅' : ' fracture')) + ' 쨌 ' + location_name + dispSuffix;
       status_code = STATUS.AMBIGUOUS_WARNING;
       if (lang === 'zh') {
-        clinical_prompt = `⚠ **智能边界警告**:模型检测到断口形态崎岖(Comminuted raw ${Math.round(comm_raw*100)}%),但 EdgeGuidedAttention 未发现明确独立游离骨片(fragment_att ${Math.round(fragment_att*100)}%,低于 ${Math.round(T.fragment_att_warn*100)}% 阈值)。建议放射科医师在原始 DICOM 上仔细复核此处是否存在 1–3 mm 的细微皮质碎片,以排除轻度粉碎性骨折(occult comminution)。结合临床病史(高能量损伤?)与轴位片综合判断。`;
+        clinical_prompt = `??**?븃꺗渦밭븣鈺?몜**:與▼엹汝役뗥댆??룭壤€곩킂略?Comminuted raw ${Math.round(comm_raw*100)}%),鵝?EdgeGuidedAttention ?ゅ룕?경삇簾?떖塋뗦만獵삯え??fragment_att ${Math.round(fragment_att*100)}%,鵝롣틢 ${Math.round(T.fragment_att_warn*100)}% ?덂??귛뻠溫?붂弱꾤쭛?삣툑?ⓨ렅冶?DICOM 訝듾퍝瀯녶쨳?멩?鸚꾣삸??춼??1?? mm ?꾤퍏孃?슢兀①쥙??餓ζ럲?ㅸ슥佯?쾳閻롦㏝え??occult comminution)?귞퍜?덁릿佯딁뾽??遙섋꺗?뤸뜜鴉?)訝롨슈鵝띸뎴瀯쇔릦?ㅶ뼪??;
       } else if (lang === 'ko') {
-        clinical_prompt = `⚠ **지능형 경계 경고**:모델은 거친 골절선(Comminuted raw ${Math.round(comm_raw*100)}%)을 감지했으나 EdgeGuidedAttention은 명확한 독립 골편을 발견하지 못했습니다(fragment_att ${Math.round(fragment_att*100)}%)。원본 DICOM에서 1–3 mm의 미세 피질 골편을 면밀히 재검토하여 경증 분쇄성 골절을 배제할 것을 권장합니다.`;
+        clinical_prompt = `??**吏?ν삎 寃쎄퀎 寃쎄퀬**:紐⑤뜽? 嫄곗튇 怨⑥젅??Comminuted raw ${Math.round(comm_raw*100)}%)??媛먯??덉쑝??EdgeGuidedAttention? 紐낇솗???낅┰ 怨⑦렪??諛쒓껄?섏? 紐삵뻽?듬땲??fragment_att ${Math.round(fragment_att*100)}%)?귥썝蹂?DICOM?먯꽌 1?? mm??誘몄꽭 ?쇱쭏 怨⑦렪??硫대????ш??좏븯??寃쎌쬆 遺꾩뇙??怨⑥젅??諛곗젣??寃껋쓣 沅뚯옣?⑸땲??`;
       } else {
-        clinical_prompt = `⚠ **Smart boundary warning**: The model detected a jagged break-line texture (Comminuted raw ${Math.round(comm_raw*100)}%) but EdgeGuidedAttention found no clear independent fragment (fragment_att ${Math.round(fragment_att*100)}%, below the ${Math.round(T.fragment_att_warn*100)}% threshold). Radiologist should carefully review the original DICOM for any 1–3 mm cortical fragments to rule out occult comminution. Correlate with clinical history (high-energy trauma?) and axial views.`;
+        clinical_prompt = `??**Smart boundary warning**: The model detected a jagged break-line texture (Comminuted raw ${Math.round(comm_raw*100)}%) but EdgeGuidedAttention found no clear independent fragment (fragment_att ${Math.round(fragment_att*100)}%, below the ${Math.round(T.fragment_att_warn*100)}% threshold). Radiologist should carefully review the original DICOM for any 1?? mm cortical fragments to rule out occult comminution. Correlate with clinical history (high-energy trauma?) and axial views.`;
       }
       rules_fired.push('rule_2b_ambiguous_warning');
 
     } else if (is_transverse_lead) {
-      // 2c) Low comminuted + transverse leading → collapse
-      final_class = L.direction[0] + (lang === 'zh' ? '骨折' : (lang === 'ko' ? ' 골절' : ' fracture')) + ' · ' + location_name + dispSuffix;
+      // 2c) Low comminuted + transverse leading ??collapse
+      final_class = L.direction[0] + (lang === 'zh' ? '謠ⓩ뒛' : (lang === 'ko' ? ' 怨⑥젅' : ' fracture')) + ' 쨌 ' + location_name + dispSuffix;
       status_code = STATUS.CLEAR;
       if (lang === 'zh') {
-        clinical_prompt = `AI 判定:**典型横形骨折**${has_displacement?'(伴移位)':''}。未见粉碎或游离骨片证据(comm_prob ${Math.round(comm_raw*100)}% < 35%)。可按横形骨折标准复位流程处理。`;
+        clinical_prompt = `AI ?ㅵ츣:**?멨엹與ゅ숱謠ⓩ뒛**${has_displacement?'(鴉당㎉鵝?':''}?귝쑋鰲곭쾳閻롦닑歷며┿謠①뎴瑥곫뜮(comm_prob ${Math.round(comm_raw*100)}% < 35%)?귛룾?됪Ø壤?え?섉젃?녶쨳鵝띷탛葉뗥쨪?녴?;
       } else if (lang === 'ko') {
-        clinical_prompt = `AI 판정:**전형적 횡상 골절**${has_displacement?'(전위 동반)':''}。분쇄나 골편 증거 없음(comm_prob ${Math.round(comm_raw*100)}% < 35%)。표준 횡상 골절 복위 절차를 따를 수 있습니다.`;
+        clinical_prompt = `AI ?먯젙:**?꾪삎???≪긽 怨⑥젅**${has_displacement?'(?꾩쐞 ?숇컲)':''}?귣텇?꾨굹 怨⑦렪 利앷굅 ?놁쓬(comm_prob ${Math.round(comm_raw*100)}% < 35%)?귦몴以 ?≪긽 怨⑥젅 蹂듭쐞 ?덉감瑜??곕? ???덉뒿?덈떎.`;
       } else {
         clinical_prompt = `AI verdict: **Typical transverse fracture**${has_displacement?' with displacement':''}. No comminuted or fragment evidence (comm_prob ${Math.round(comm_raw*100)}% < 35%). Can follow standard transverse-fracture reduction protocol.`;
       }
@@ -466,19 +462,19 @@
 
     } else {
       // Default clean call
-      final_class = dir_name + (lang === 'zh' ? '骨折' : (lang === 'ko' ? ' 골절' : ' fracture')) + ' · ' + location_name + dispSuffix;
+      final_class = dir_name + (lang === 'zh' ? '謠ⓩ뒛' : (lang === 'ko' ? ' 怨⑥젅' : ' fracture')) + ' 쨌 ' + location_name + dispSuffix;
       status_code = STATUS.CLEAR;
       if (lang === 'zh') {
-        clinical_prompt = `AI 判定:${final_class}。形态学特征明确,无粉碎证据。`;
+        clinical_prompt = `AI ?ㅵ츣:${final_class}?귛숱?곩??밧푳?롧‘,?좂쾳閻롨칮???;
       } else if (lang === 'ko') {
-        clinical_prompt = `AI 판정:${final_class}。형태학적 특징이 명확하며 분쇄 증거가 없습니다.`;
+        clinical_prompt = `AI ?먯젙:${final_class}?귦삎?쒗븰???뱀쭠??紐낇솗?섎ŉ 遺꾩뇙 利앷굅媛 ?놁뒿?덈떎.`;
       } else {
         clinical_prompt = `AI verdict: ${final_class}. Morphological features are clear, no comminution evidence.`;
       }
       rules_fired.push('rule_default_clear');
     }
 
-    // ── RULE 3: Confidence floor ─────────────────────────────────────────────
+    // ?? RULE 3: Confidence floor ?????????????????????????????????????????????
     const loc_conf   = Math.max(loc_prob_shaft, 1 - loc_prob_shaft);
     const morph_conf = Math.max(comm_prob, 1 - comm_prob);
     const overall_conf = Math.min(loc_conf, dir_max, morph_conf);
@@ -486,9 +482,9 @@
     if (overall_conf < T.low_conf_floor && status_code === STATUS.CLEAR) {
       status_code = STATUS.LOW_CONFIDENCE;
       if (lang === 'zh') {
-        clinical_prompt += ` 注:整体置信度 ${Math.round(overall_conf*100)}% 低于安全阈值 ${Math.round(T.low_conf_floor*100)}%,建议结合临床和补充影像综合判断。`;
+        clinical_prompt += ` 力??답퐪營?에佯?${Math.round(overall_conf*100)}% 鵝롣틢若됧뀲?덂?${Math.round(T.low_conf_floor*100)}%,兩븃?瀯볟릦訝닷틞?뚩‥?끻쉽?뤹뻤?덂닩???;
       } else if (lang === 'ko') {
-        clinical_prompt += ` 참고:전체 신뢰도 ${Math.round(overall_conf*100)}%는 안전 기준 ${Math.round(T.low_conf_floor*100)}% 미만이므로 임상 및 추가 영상을 종합적으로 판단할 것을 권장합니다.`;
+        clinical_prompt += ` 李멸퀬:?꾩껜 ?좊ː??${Math.round(overall_conf*100)}%???덉쟾 湲곗? ${Math.round(T.low_conf_floor*100)}% 誘몃쭔?대?濡??꾩긽 諛?異붽? ?곸긽??醫낇빀?곸쑝濡??먮떒??寃껋쓣 沅뚯옣?⑸땲??`;
       } else {
         clinical_prompt += ` Note: overall confidence ${Math.round(overall_conf*100)}% is below the safety floor of ${Math.round(T.low_conf_floor*100)}%; combine with clinical findings and additional imaging.`;
       }
@@ -506,7 +502,7 @@
     };
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
+  // ???????????????????????????????????????????????????????????????????????????
   // Public formatters (called by app.js)
   function formatLine(decoded, lang) {
     // If the expert system has produced a final_class, prefer it.
@@ -520,55 +516,55 @@
     parts.push(T.location[decoded.location.idx]);
     if (decoded.morphology.displaced.yes)  parts.push(T.displaced.yes);
     if (decoded.morphology.comminuted.yes) parts.push(T.comminuted.yes);
-    return parts.join(' · ');
+    return parts.join(' 쨌 ');
   }
 
   function formatHTML(decoded, lang) {
     const T = I18N[lang] || I18N.en;
     const bar = (label, prob, kind, isYes) => {
       const pct = Math.round(prob * 100);
-      const color = (kind === 'info') ? '#3b82f6' : (isYes ? '#e23' : '#2a7');
+      const fillClass = kind === 'info' ? 'info' : (isYes ? 'alarm-yes' : 'alarm-no');
       return (
-        '<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin:2px 0">' +
-          '<span style="width:84px;color:#666">' + label + '</span>' +
-          '<div style="flex:1;background:#eee;border-radius:2px;height:6px;overflow:hidden">' +
-            '<div style="width:' + pct + '%;height:100%;background:' + color + '"></div>' +
+        '<div class="mtl-bar">' +
+          '<span class="mtl-bar-label">' + label + '</span>' +
+          '<div class="mtl-bar-track">' +
+            '<div class="mtl-bar-fill ' + fillClass + '" style="width:' + pct + '%"></div>' +
           '</div>' +
-          '<span style="width:36px;text-align:right;font-variant-numeric:tabular-nums">' + pct + '%</span>' +
+          '<span class="mtl-bar-pct">' + pct + '%</span>' +
         '</div>'
       );
     };
     let html = '';
-    html += bar(T.direction[decoded.direction.idx],  decoded.direction.conf,            'info');
-    html += bar(T.location[decoded.location.idx],    decoded.location.conf,             'info');
-    html += bar(T.displaced.yes,  decoded.morphology.displaced.prob,  'alarm', decoded.morphology.displaced.yes);
+    html += bar(T.direction[decoded.direction.idx], decoded.direction.conf, 'info');
+    html += bar(T.location[decoded.location.idx], decoded.location.conf, 'info');
+    html += bar(T.displaced.yes, decoded.morphology.displaced.prob, 'alarm', decoded.morphology.displaced.yes);
     html += bar(T.comminuted.yes, decoded.morphology.comminuted.prob, 'alarm', decoded.morphology.comminuted.yes);
 
-    // ── Expert-system status badge + clinical prompt ──
     if (decoded.expert_decision) {
       const ed = decoded.expert_decision;
-      // Re-compute prompt in the requested language so the UI matches the page language.
       const localizedDecision = executeExpertRules(decoded, lang);
       const STATUS_STYLES = {
-        200: { bg: '#1a3a1a', fg: '#5fd97a', label: lang==='zh'?'移位':(lang==='ko'?'전위':'DISPLACED') },
-        201: { bg: '#4a1a1a', fg: '#ff6b6b', label: lang==='zh'?'粉碎':(lang==='ko'?'분쇄':'COMMINUTED') },
-        202: { bg: '#4a150a', fg: '#ff8c42', label: lang==='zh'?'高危粉碎':(lang==='ko'?'고위험분쇄':'HIGH-RISK') },
-        203: { bg: '#1a2a4a', fg: '#7eb8ff', label: lang==='zh'?'撕脱':(lang==='ko'?'견열':'AVULSION') },
+        200: { cls: 'mtl-verdict--disp', label: lang === 'zh' ? '燁삡퐤' : (lang === 'ko' ? '?꾩쐞' : 'DISPLACED') },
+        201: { cls: 'mtl-verdict--comm', label: lang === 'zh' ? '暎됬쥙' : (lang === 'ko' ? '遺꾩뇙' : 'COMMINUTED') },
+        202: { cls: 'mtl-verdict--risk', label: lang === 'zh' ? '遙섇뜳暎됬쥙' : (lang === 'ko' ? '怨좎쐞?섎텇?? : 'HIGH-RISK') },
+        203: { cls: 'mtl-verdict--avulsion', label: lang === 'zh' ? '?뺠꽦' : (lang === 'ko' ? '寃ъ뿴' : 'AVULSION') },
       };
       const st = STATUS_STYLES[ed.status_code] || STATUS_STYLES[200];
-      html += '<div style="margin-top:8px;padding:8px 10px;background:' + st.bg + ';border-radius:5px">' +
-                '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">' +
-                  '<span style="background:' + st.fg + ';color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px">' + st.label + '</span>' +
-                  '<span style="font-size:10px;color:#aaa">' + ed.status_name + ' · ' + Math.round(ed.confidence*100) + '%</span>' +
-                '</div>' +
-                '<div style="font-size:11px;line-height:1.5;color:#ddd">' + localizedDecision.clinical_prompt + '</div>' +
-              '</div>';
+      const prompt = (localizedDecision.clinical_prompt || '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      html +=
+        '<div class="mtl-verdict ' + st.cls + '">' +
+          '<div class="mtl-verdict-hd">' +
+            '<span class="mtl-verdict-badge">' + st.label + '</span>' +
+            '<span class="mtl-verdict-meta">' + ed.status_name + ' 쨌 ' + Math.round(ed.confidence * 100) + '%</span>' +
+          '</div>' +
+          '<div class="mtl-verdict-body">' + prompt + '</div>' +
+        '</div>';
     }
 
     return html;
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
+  // ???????????????????????????????????????????????????????????????????????????
   // Public surface
   window.MTL = {
     load:               loadMTL,
